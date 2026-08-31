@@ -1,18 +1,54 @@
 # 悬浮中转站
 
-一个贴在 Windows 屏幕边缘的文字与图片中转站。复制、拖进来、分个类，再把内容拖到真正需要它的软件里。
+一个贴在 Windows 与 macOS 屏幕边缘的文字与图片中转站。复制、拖进来、分个类，再把内容拖到真正需要它的软件里。
 
-> 当前支持 Windows 10/11 64 位。项目刚刚公开，真实演示视频会在录制完成后补到这里。
+> 本仓库基于 [Oiawlm/floating-transfer-station](https://github.com/Oiawlm/floating-transfer-station) 开发，在保留 Windows 版本的同时增加了可在 macOS 13 及以上版本运行的原生版本。
 
 ## 下载与安装
 
-前往 [Releases](https://github.com/Oiawlm/floating-transfer-station/releases) 下载 `FloatingTransferStation-Setup-1.3.0.exe`。
+### macOS
+
+从 [Releases](https://github.com/SJT-bright/floating-transfer-station/releases) 下载 `FloatingTransferStation-macOS-universal.zip`。它同时支持 Apple 芯片和 Intel 芯片。
+
+1. 解压 ZIP，把“悬浮中转站.app”拖入“应用程序”。
+2. 首次打开如果被 macOS 阻止，请前往“系统设置 → 隐私与安全性”选择“仍要打开”。
+3. 应用启动后可在菜单中控制是否开机自动启动。
+
+### Windows
+
+前往[原项目 Releases](https://github.com/Oiawlm/floating-transfer-station/releases)下载 `FloatingTransferStation-Setup-1.3.0.exe`。
 
 1. 运行安装程序。
 2. 选择程序安装位置和内容存储父目录；不修改时使用当前用户的本地目录。
 3. 安装完成后软件会启动，并在以后登录 Windows 时自动运行。
 
-1.3.0 已通过自动质量门和安装包构建验证，安装包现已开放下载。本地构建产物使用中文名，GitHub Release 为了稳定下载链接使用上面的英文文件名。Release 页面中的 `.zip` / `.tar.gz` 是 GitHub 自动生成的源码包，不是 Windows 安装程序。
+Windows 1.3.0 已通过自动质量门和安装包构建验证。GitHub 自动生成的 `Source code (zip)` / `Source code (tar.gz)` 是源码包；可直接运行的 Mac 版本请下载名称为 `FloatingTransferStation-macOS-universal.zip` 的 Release 附件。
+
+### macOS 本地构建与运行
+
+macOS 版本使用系统自带的 Swift 和 AppKit，不需要安装 .NET 或 Xcode 完整版。在仓库根目录运行：
+
+```bash
+./scripts/run-macos.sh
+```
+
+脚本会生成并打开 `macos/.build/release/悬浮中转站.app`。窗口使用跟随系统深浅色与“降低透明度”辅助设置的原生半透明材质；平时缩成吸附在屏幕右侧的窄把手，鼠标移入时展开、离开后收回。按住最右侧竖栏可以让窗口跟手上下移动，横向位置始终锁在屏幕右边；其他区域不会拖动窗口本体。直接拖动卡片里的图片即可把图片拖到其他应用，拖拽期间面板会保持展开；应用只会通过菜单中的“退出悬浮中转站”主动退出。应用还使用 macOS 原生登录项在用户登录时自动启动，并支持文字与图片剪贴板自动采集、外部拖入、“人物资产”“场景”“提示词”和“待分类”四个分类、分类改名、置顶、跨分类移动、复制、删除、清空、悬浮置顶和本地持久化。数据默认保存在 `~/Library/Application Support/悬浮中转站/Data/`。
+
+运行 macOS 核心回归测试：
+
+```bash
+./scripts/test-macos.sh
+```
+
+生成可分享给其他 Mac 的通用应用包和源码包：
+
+```bash
+./scripts/package-macos.sh
+```
+
+产物会写入 `artifacts/macos/`。应用包同时支持 Apple 芯片和 Intel 芯片；没有 Apple Developer ID 证书时会使用临时签名，接收者首次打开可能需要在“系统设置 → 隐私与安全性”中确认“仍要打开”。
+
+macOS 版本当前不包含 Windows 安装器、批量选择和卡片手动排序；这些 Windows 专属或增强交互不会影响基础中转流程。
 
 ## 它能做什么
 
@@ -48,7 +84,7 @@
 - 外部拖放基于 Windows 通用格式；不同软件实际提供的格式不同，因此不是所有来源都能接收。
 - B-005 图片分类反馈稍晚、B-006 微信复制图片偶发生成两份目前属于低优先级现场观察，自动测试环境未能稳定复现。
 
-遇到问题可以提交 [Bug 报告](https://github.com/Oiawlm/floating-transfer-station/issues/new?template=bug_report.yml)，有新想法可以提交 [功能建议](https://github.com/Oiawlm/floating-transfer-station/issues/new?template=feature_request.yml)。
+遇到问题可以提交 [Bug 报告](https://github.com/SJT-bright/floating-transfer-station/issues/new?template=bug_report.yml)，有新想法可以提交 [功能建议](https://github.com/SJT-bright/floating-transfer-station/issues/new?template=feature_request.yml)。
 
 ## 接下来准备做什么
 
@@ -76,4 +112,4 @@
 
 ## 许可证
 
-本项目使用 [MIT License](LICENSE)。
+本项目使用 [MIT License](LICENSE)，保留原作者版权与许可声明。

@@ -6,6 +6,7 @@
 **/obj/
 artifacts/
 TestResults/
+macos/.build/
 *.bundle
 *.user
 *.suo
