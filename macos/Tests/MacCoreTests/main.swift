@@ -243,8 +243,9 @@ enum MacCoreTests {
     private static func testImageDragProviderExportsImageAndFile() throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = AppPaths(dataDirectory: directory)
         let model = BoardModel(
-            store: LocalStore(paths: AppPaths(dataDirectory: directory)),
+            store: LocalStore(paths: paths),
             monitorsClipboard: false
         )
         let image = NSImage(
@@ -258,14 +259,59 @@ enum MacCoreTests {
         model.addImages([image], to: .inbox)
 
         let item = try require(model.orderedItems(in: .inbox).first, "missing image item")
+        let managedURL = try require(model.imageURL(for: item), "missing managed image URL")
         let provider = model.dragProvider(for: item)
         try check(
             provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
-            "image drag no longer exports a file URL"
+            "image drag no longer advertises a file URL to Jianying"
         )
         try check(
             provider.canLoadObject(ofClass: NSImage.self),
             "image drag no longer exports image data"
+        )
+
+        var loadFinished = false
+        var receivedURL: URL?
+        var receivedError: Error?
+        provider.loadItem(
+            forTypeIdentifier: UTType.fileURL.identifier,
+            options: nil
+        ) { value, error in
+            receivedError = error
+            if let url = value as? URL {
+                receivedURL = url
+            } else if let url = value as? NSURL {
+                receivedURL = url as URL
+            } else if let data = value as? Data,
+                      let string = String(data: data, encoding: .utf8) {
+                receivedURL = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            loadFinished = true
+        }
+        let timeout = Date().addingTimeInterval(3)
+        while !loadFinished && Date() < timeout {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        try check(
+            loadFinished,
+            "Jianying-compatible file URL did not finish loading"
+        )
+        try check(receivedError == nil, "Jianying-compatible file URL failed to load")
+        let exportedURL = try require(receivedURL, "Jianying-compatible provider returned no URL")
+        try check(
+            exportedURL.standardizedFileURL != managedURL.standardizedFileURL,
+            "image drag returned the private managed file instead of its export copy"
+        )
+        try check(
+            exportedURL.deletingLastPathComponent().standardizedFileURL
+                == paths.dragExportsDirectory.standardizedFileURL,
+            "image drag returned a file outside the persistent export directory"
+        )
+        let managedData = try Data(contentsOf: managedURL)
+        let exportedData = try Data(contentsOf: exportedURL)
+        try check(
+            exportedData == managedData,
+            "persistent drag copy does not match the managed image"
         )
     }
 

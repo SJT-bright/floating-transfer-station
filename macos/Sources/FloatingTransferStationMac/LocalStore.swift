@@ -6,13 +6,18 @@ struct AppPaths {
     let boardFile: URL
     let settingsFile: URL
     let imagesDirectory: URL
+    let dragExportsDirectory: URL
 
-    init(dataDirectory: URL) {
+    init(dataDirectory: URL, dragExportsDirectory: URL? = nil) {
         let normalized = dataDirectory.standardizedFileURL
         self.dataDirectory = normalized
         boardFile = normalized.appendingPathComponent("board.json", isDirectory: false)
         settingsFile = normalized.appendingPathComponent("settings.json", isDirectory: false)
         imagesDirectory = normalized.appendingPathComponent("images", isDirectory: true)
+        self.dragExportsDirectory = (
+            dragExportsDirectory
+                ?? normalized.appendingPathComponent("drag-exports", isDirectory: true)
+        ).standardizedFileURL
     }
 
     static var `default`: AppPaths {
@@ -20,10 +25,17 @@ struct AppPaths {
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first!
+        let dataDirectory = base
+            .appendingPathComponent("悬浮中转站", isDirectory: true)
+            .appendingPathComponent("Data", isDirectory: true)
+        let movies = FileManager.default.urls(
+            for: .moviesDirectory,
+            in: .userDomainMask
+        ).first ?? dataDirectory
         return AppPaths(
-            dataDirectory: base
-                .appendingPathComponent("悬浮中转站", isDirectory: true)
-                .appendingPathComponent("Data", isDirectory: true)
+            dataDirectory: dataDirectory,
+            dragExportsDirectory: movies
+                .appendingPathComponent("悬浮中转站素材", isDirectory: true)
         )
     }
 }
@@ -121,6 +133,30 @@ final class LocalStore {
             return nil
         }
         return candidate
+    }
+
+    func exportImageForDrag(relativePath: String) throws -> URL {
+        guard let source = managedImageURL(relativePath: relativePath),
+              fileManager.fileExists(atPath: source.path)
+        else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+
+        try fileManager.createDirectory(
+            at: paths.dragExportsDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o755]
+        )
+        let destination = paths.dragExportsDirectory
+            .appendingPathComponent(source.lastPathComponent, isDirectory: false)
+        if !fileManager.fileExists(atPath: destination.path) {
+            try fileManager.copyItem(at: source, to: destination)
+        }
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: destination.path
+        )
+        return destination
     }
 
     @discardableResult

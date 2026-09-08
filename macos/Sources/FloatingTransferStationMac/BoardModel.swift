@@ -237,14 +237,22 @@ final class BoardModel: ObservableObject {
             return NSItemProvider(object: (item.text ?? "") as NSString)
         case .image:
             guard let relativePath = item.imageRelativePath,
-                  let url = store.managedImageURL(relativePath: relativePath),
-                  let image = NSImage(contentsOf: url)
+                  let managedURL = store.managedImageURL(relativePath: relativePath),
+                  let image = NSImage(contentsOf: managedURL)
             else {
                 return NSItemProvider()
             }
-            let provider = NSItemProvider(contentsOf: url) ?? NSItemProvider()
+
+            let provider: NSItemProvider
+            do {
+                let exportURL = try store.exportImageForDrag(relativePath: relativePath)
+                provider = NSItemProvider(contentsOf: exportURL) ?? NSItemProvider()
+                provider.suggestedName = exportURL.deletingPathExtension().lastPathComponent
+            } catch {
+                showStatus("图片导出副本创建失败，请重试。")
+                provider = NSItemProvider()
+            }
             provider.registerObject(image, visibility: .all)
-            provider.suggestedName = url.deletingPathExtension().lastPathComponent
             return provider
         }
     }
