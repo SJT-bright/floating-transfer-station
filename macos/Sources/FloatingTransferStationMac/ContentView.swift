@@ -282,7 +282,7 @@ struct ContentView: View {
                     RoundedRectangle(cornerRadius: 10)
                         .fill(
                             dropTargetCategory == category
-                                ? Color.accentColor.opacity(0.3)
+                                ? Color.accentColor.opacity(0.42)
                                 : model.activeCategory == category
                                     ? Color.accentColor.opacity(0.16)
                                     : Color.clear
@@ -297,8 +297,10 @@ struct ContentView: View {
                             lineWidth: 2
                         )
                 )
+                .scaleEffect(dropTargetCategory == category ? 1.03 : 1)
+                .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
                 .onDrop(
-                    of: [BoardModel.boardItemDragTypeIdentifier],
+                    of: [UTType.fileURL.identifier],
                     delegate: CategoryCopyDropDelegate(
                         model: model,
                         category: category,
@@ -485,7 +487,7 @@ private struct BoardDropDelegate: DropDelegate {
     let category: BoardCategory
 
     func validateDrop(info: DropInfo) -> Bool {
-        guard info.itemProviders(for: [BoardModel.boardItemDragTypeIdentifier]).isEmpty else {
+        guard internalImageProvider(from: info) == nil else {
             return false
         }
         return !info.itemProviders(for: [
@@ -496,7 +498,7 @@ private struct BoardDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard info.itemProviders(for: [BoardModel.boardItemDragTypeIdentifier]).isEmpty else {
+        guard internalImageProvider(from: info) == nil else {
             return false
         }
         let providers = info.itemProviders(for: [
@@ -510,6 +512,11 @@ private struct BoardDropDelegate: DropDelegate {
         model.importProviders(providers, to: category)
         return true
     }
+
+    private func internalImageProvider(from info: DropInfo) -> NSItemProvider? {
+        info.itemProviders(for: [UTType.fileURL.identifier])
+            .first(where: { model.draggedImageID(from: $0) != nil })
+    }
 }
 
 private struct CategoryCopyDropDelegate: DropDelegate {
@@ -517,12 +524,13 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     let category: BoardCategory
     @Binding var targetedCategory: BoardCategory?
 
-    private func providers(from info: DropInfo) -> [NSItemProvider] {
-        info.itemProviders(for: [BoardModel.boardItemDragTypeIdentifier])
+    private func provider(from info: DropInfo) -> NSItemProvider? {
+        info.itemProviders(for: [UTType.fileURL.identifier])
+            .first(where: { model.draggedImageID(from: $0) != nil })
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        category != model.activeCategory && !providers(from: info).isEmpty
+        category != model.activeCategory && provider(from: info) != nil
     }
 
     func dropEntered(info: DropInfo) {
@@ -542,25 +550,14 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard validateDrop(info: info), let provider = providers(from: info).first else {
+        guard validateDrop(info: info),
+              let provider = provider(from: info),
+              let id = model.draggedImageID(from: provider)
+        else {
             targetedCategory = nil
             return false
         }
-
-        provider.loadDataRepresentation(
-            forTypeIdentifier: BoardModel.boardItemDragTypeIdentifier
-        ) { data, _ in
-            guard let data,
-                  let rawID = String(data: data, encoding: .utf8),
-                  let id = UUID(uuidString: rawID)
-            else {
-                return
-            }
-            DispatchQueue.main.async {
-                _ = model.copyImage(id, to: category)
-            }
-        }
         targetedCategory = nil
-        return true
+        return model.copyImage(id, to: category)
     }
 }

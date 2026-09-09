@@ -271,8 +271,8 @@ enum MacCoreTests {
             "image drag no longer exports image data"
         )
         try check(
-            provider.hasItemConformingToTypeIdentifier(BoardModel.boardItemDragTypeIdentifier),
-            "image drag no longer identifies its internal source item"
+            model.draggedImageID(from: provider) == item.id,
+            "image drag suggested name no longer resolves to its source item"
         )
 
         var loadFinished = false
@@ -318,24 +318,6 @@ enum MacCoreTests {
             exportedData == managedData,
             "persistent drag copy does not match the managed image"
         )
-
-        var internalIDLoadFinished = false
-        var receivedInternalID: UUID?
-        provider.loadDataRepresentation(
-            forTypeIdentifier: BoardModel.boardItemDragTypeIdentifier
-        ) { data, _ in
-            if let data,
-               let rawID = String(data: data, encoding: .utf8) {
-                receivedInternalID = UUID(uuidString: rawID)
-            }
-            internalIDLoadFinished = true
-        }
-        let internalIDTimeout = Date().addingTimeInterval(3)
-        while !internalIDLoadFinished && Date() < internalIDTimeout {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
-        try check(internalIDLoadFinished, "internal drag item ID did not finish loading")
-        try check(receivedInternalID == item.id, "internal drag item ID changed")
     }
 
     private static func testCopyImageToAnotherCategoryPreservesSourceAndPersists() throws {

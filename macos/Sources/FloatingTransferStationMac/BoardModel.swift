@@ -4,8 +4,6 @@ import Foundation
 import UniformTypeIdentifiers
 
 final class BoardModel: ObservableObject {
-    static let boardItemDragTypeIdentifier = "com.oiawlm.floating-transfer-station.board-item-id"
-
     @Published private(set) var items: [BoardItem]
     @Published var activeCategory: BoardCategory
     @Published var defaultCaptureCategory: BoardCategory
@@ -293,15 +291,23 @@ final class BoardModel: ObservableObject {
                 provider = NSItemProvider()
             }
             provider.registerObject(image, visibility: .all)
-            provider.registerDataRepresentation(
-                forTypeIdentifier: Self.boardItemDragTypeIdentifier,
-                visibility: .ownProcess
-            ) { completion in
-                completion(Data(item.id.uuidString.utf8), nil)
-                return nil
-            }
             return provider
         }
+    }
+
+    func draggedImageID(from provider: NSItemProvider) -> UUID? {
+        guard let suggestedName = provider.suggestedName else {
+            return nil
+        }
+        let nameWithoutExtension = URL(fileURLWithPath: suggestedName)
+            .deletingPathExtension()
+            .lastPathComponent
+        guard let id = UUID(uuidString: nameWithoutExtension),
+              items.contains(where: { $0.id == id && $0.kind == .image })
+        else {
+            return nil
+        }
+        return id
     }
 
     func imageURL(for item: BoardItem) -> URL? {
