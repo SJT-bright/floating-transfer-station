@@ -549,12 +549,11 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard let provider = provider(from: info) else {
+        guard provider(from: info) != nil else {
             targetedCategory = nil
             return false
         }
         targetedCategory = nil
-        model.copyDraggedImageProvider(provider, to: category)
-        return true
+        return model.copyDraggedImage(from: NSPasteboard(name: .drag), to: category)
     }
 }

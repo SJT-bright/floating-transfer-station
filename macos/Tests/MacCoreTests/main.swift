@@ -338,13 +338,12 @@ enum MacCoreTests {
         let source = try require(model.orderedItems(in: .inbox).first, "missing copy source")
         let sourceURL = try require(model.imageURL(for: source), "missing copy source image")
         let sourceData = try Data(contentsOf: sourceURL)
-        let provider = model.dragProvider(for: source)
+        let exportURL = try store.exportImageForDrag(relativePath: source.imageRelativePath!)
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.setString(exportURL.absoluteString, forType: .fileURL)
         model.selectCategory(.reference)
-        model.copyDraggedImageProvider(provider, to: .reference)
-        let copyTimeout = Date().addingTimeInterval(3)
-        while model.orderedItems(in: .reference).isEmpty && Date() < copyTimeout {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        }
+        try check(model.copyDraggedImage(from: pasteboard, to: .reference), "native pasteboard copy failed")
 
         let remainingSource = try require(
             model.orderedItems(in: .inbox).first,
@@ -369,6 +368,12 @@ enum MacCoreTests {
         let reloaded = BoardModel(store: store, monitorsClipboard: false)
         try check(reloaded.orderedItems(in: .inbox).map(\.id) == [source.id], "source did not persist")
         try check(reloaded.orderedItems(in: .reference).map(\.id) == [copied.id], "copy did not persist")
+        pasteboard.clearContents()
+        try check(!model.copyDraggedImage(from: pasteboard, to: .reference), "empty drag was accepted")
+        let unrelatedURL = directory.appendingPathComponent(sourceURL.lastPathComponent)
+        pasteboard.setString(unrelatedURL.absoluteString, forType: .fileURL)
+        try check(!model.copyDraggedImage(from: pasteboard, to: .reference), "unrelated same-name file was accepted")
+        try check(model.orderedItems(in: .reference).count == 1, "invalid drag changed target count")
     }
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {

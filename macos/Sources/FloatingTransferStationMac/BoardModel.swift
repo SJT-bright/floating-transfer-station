@@ -302,34 +302,27 @@ final class BoardModel: ObservableObject {
         return draggedImageID(fromFileName: suggestedName)
     }
 
-    func copyDraggedImageProvider(_ provider: NSItemProvider, to targetCategory: BoardCategory) {
-        provider.loadItem(
-            forTypeIdentifier: UTType.fileURL.identifier,
-            options: nil
-        ) { [weak self] value, _ in
-            let url: URL?
-            if let value = value as? URL {
-                url = value
-            } else if let value = value as? NSURL {
-                url = value as URL
-            } else if let data = value as? Data,
-                      let rawURL = String(data: data, encoding: .utf8) {
-                url = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines))
-            } else {
-                url = nil
-            }
-
-            DispatchQueue.main.async {
-                guard let self,
-                      let url,
-                      let id = self.draggedImageID(fromFileName: url.lastPathComponent)
-                else {
-                    self?.showStatus("无法识别这张拖动图片，请重试。")
-                    return
-                }
-                _ = self.copyImage(id, to: targetCategory)
-            }
+    @discardableResult
+    func copyDraggedImage(from pasteboard: NSPasteboard, to targetCategory: BoardCategory) -> Bool {
+        // SwiftUI's bridged provider can advertise file-url but fail to load it.
+        // Read the URL while the native drag pasteboard is still valid at mouse-up.
+        guard let rawURL = pasteboard.string(forType: .fileURL),
+              let url = URL(string: rawURL),
+              url.isFileURL,
+              let id = draggedImageID(fromFileName: url.lastPathComponent),
+              let source = items.first(where: { $0.id == id }),
+              let managedURL = imageURL(for: source)
+        else {
+            showStatus("无法识别这张拖动图片，请重试。")
+            return false
         }
+        let exportURL = store.paths.dragExportsDirectory.appendingPathComponent(managedURL.lastPathComponent)
+        guard url.standardizedFileURL == exportURL.standardizedFileURL
+                || url.standardizedFileURL == managedURL.standardizedFileURL else {
+            showStatus("请从中转站内拖动图片到其他分类。")
+            return false
+        }
+        return copyImage(id, to: targetCategory)
     }
 
     private func draggedImageID(fromFileName fileName: String) -> UUID? {
