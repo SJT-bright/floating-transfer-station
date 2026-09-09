@@ -66,6 +66,10 @@ struct ContentView: View {
                 statusBar
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onDrop(
+                of: [UTType.fileURL.identifier, UTType.image.identifier, UTType.plainText.identifier],
+                delegate: BoardDropDelegate(model: model, category: model.activeCategory)
+            )
 
             Divider()
             categoryRail
@@ -73,10 +77,6 @@ struct ContentView: View {
         .background {
             translucentPanelBackground.ignoresSafeArea()
         }
-        .onDrop(
-            of: [UTType.fileURL.identifier, UTType.image.identifier, UTType.plainText.identifier],
-            delegate: BoardDropDelegate(model: model, category: model.activeCategory)
-        )
         .alert("重命名分类", isPresented: $isRenaming) {
             TextField("最多 6 个字符", text: $renameDraft)
             Button("取消", role: .cancel) {}
@@ -525,8 +525,7 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     @Binding var targetedCategory: BoardCategory?
 
     private func provider(from info: DropInfo) -> NSItemProvider? {
-        info.itemProviders(for: [UTType.fileURL.identifier])
-            .first(where: { model.draggedImageID(from: $0) != nil })
+        info.itemProviders(for: [UTType.fileURL.identifier]).first
     }
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -551,13 +550,13 @@ private struct CategoryCopyDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         guard validateDrop(info: info),
-              let provider = provider(from: info),
-              let id = model.draggedImageID(from: provider)
+              let provider = provider(from: info)
         else {
             targetedCategory = nil
             return false
         }
         targetedCategory = nil
-        return model.copyImage(id, to: category)
+        model.copyDraggedImageProvider(provider, to: category)
+        return true
     }
 }

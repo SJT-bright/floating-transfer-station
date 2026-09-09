@@ -299,7 +299,41 @@ final class BoardModel: ObservableObject {
         guard let suggestedName = provider.suggestedName else {
             return nil
         }
-        let nameWithoutExtension = URL(fileURLWithPath: suggestedName)
+        return draggedImageID(fromFileName: suggestedName)
+    }
+
+    func copyDraggedImageProvider(_ provider: NSItemProvider, to targetCategory: BoardCategory) {
+        provider.loadItem(
+            forTypeIdentifier: UTType.fileURL.identifier,
+            options: nil
+        ) { [weak self] value, _ in
+            let url: URL?
+            if let value = value as? URL {
+                url = value
+            } else if let value = value as? NSURL {
+                url = value as URL
+            } else if let data = value as? Data,
+                      let rawURL = String(data: data, encoding: .utf8) {
+                url = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines))
+            } else {
+                url = nil
+            }
+
+            DispatchQueue.main.async {
+                guard let self,
+                      let url,
+                      let id = self.draggedImageID(fromFileName: url.lastPathComponent)
+                else {
+                    self?.showStatus("无法识别这张拖动图片，请重试。")
+                    return
+                }
+                _ = self.copyImage(id, to: targetCategory)
+            }
+        }
+    }
+
+    private func draggedImageID(fromFileName fileName: String) -> UUID? {
+        let nameWithoutExtension = URL(fileURLWithPath: fileName)
             .deletingPathExtension()
             .lastPathComponent
         guard let id = UUID(uuidString: nameWithoutExtension),
