@@ -4,6 +4,8 @@ import Foundation
 import UniformTypeIdentifiers
 
 final class BoardModel: ObservableObject {
+    static let boardItemDragTypeIdentifier = "com.oiawlm.floating-transfer-station.board-item-id"
+
     @Published private(set) var items: [BoardItem]
     @Published var activeCategory: BoardCategory
     @Published var defaultCaptureCategory: BoardCategory
@@ -180,6 +182,44 @@ final class BoardModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func copyImage(_ id: UUID, to targetCategory: BoardCategory) -> Bool {
+        guard let source = items.first(where: { $0.id == id }),
+              source.kind == .image,
+              source.category != targetCategory,
+              let relativePath = source.imageRelativePath,
+              let sourceURL = store.managedImageURL(relativePath: relativePath)
+        else {
+            return false
+        }
+
+        let copyID = UUID()
+        let copiedRelativePath: String
+        do {
+            copiedRelativePath = try store.storeImageFile(sourceURL, id: copyID)
+        } catch {
+            showStatus("图片复制失败，请重试。")
+            return false
+        }
+
+        let copiedItem = BoardItem(
+            id: copyID,
+            kind: .image,
+            category: targetCategory,
+            order: 0,
+            imageRelativePath: copiedRelativePath
+        )
+        guard persistMutation(failureMessage: "图片复制未保存，请重试。", {
+            insertAtTopOfNormalRegion([copiedItem], in: targetCategory)
+        }) else {
+            _ = store.deleteManagedImage(relativePath: copiedRelativePath)
+            return false
+        }
+
+        showStatus("已复制到“\(displayName(for: targetCategory))”")
+        return true
+    }
+
     func delete(_ id: UUID) {
         guard let item = items.first(where: { $0.id == id }) else {
             return
@@ -253,6 +293,13 @@ final class BoardModel: ObservableObject {
                 provider = NSItemProvider()
             }
             provider.registerObject(image, visibility: .all)
+            provider.registerDataRepresentation(
+                forTypeIdentifier: Self.boardItemDragTypeIdentifier,
+                visibility: .ownProcess
+            ) { completion in
+                completion(Data(item.id.uuidString.utf8), nil)
+                return nil
+            }
             return provider
         }
     }

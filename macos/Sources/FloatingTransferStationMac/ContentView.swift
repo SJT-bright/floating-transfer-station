@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var isRenaming = false
     @State private var renameDraft = ""
     @State private var confirmsClear = false
+    @State private var dropTargetCategory: BoardCategory?
 
     private var translucentPanelBackground: Color {
         if reduceTransparency {
@@ -279,9 +280,30 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .background(
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(model.activeCategory == category
-                            ? Color.accentColor.opacity(0.16)
-                            : Color.clear)
+                        .fill(
+                            dropTargetCategory == category
+                                ? Color.accentColor.opacity(0.3)
+                                : model.activeCategory == category
+                                    ? Color.accentColor.opacity(0.16)
+                                    : Color.clear
+                        )
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(
+                            dropTargetCategory == category
+                                ? Color.accentColor.opacity(0.9)
+                                : Color.clear,
+                            lineWidth: 2
+                        )
+                )
+                .onDrop(
+                    of: [BoardModel.boardItemDragTypeIdentifier],
+                    delegate: CategoryCopyDropDelegate(
+                        model: model,
+                        category: category,
+                        targetedCategory: $dropTargetCategory
+                    )
                 )
                 .contextMenu {
                     Button("重命名") {
@@ -409,7 +431,7 @@ private struct ItemCard: View {
                             .frame(width: 160, height: 120)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
-                    .help("拖动图片到其他应用")
+                    .help("拖到其他分类复制，或拖到其他应用")
             } else {
                 Label("图片文件已丢失", systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -463,7 +485,10 @@ private struct BoardDropDelegate: DropDelegate {
     let category: BoardCategory
 
     func validateDrop(info: DropInfo) -> Bool {
-        !info.itemProviders(for: [
+        guard info.itemProviders(for: [BoardModel.boardItemDragTypeIdentifier]).isEmpty else {
+            return false
+        }
+        return !info.itemProviders(for: [
             UTType.fileURL.identifier,
             UTType.image.identifier,
             UTType.plainText.identifier
@@ -471,6 +496,9 @@ private struct BoardDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        guard info.itemProviders(for: [BoardModel.boardItemDragTypeIdentifier]).isEmpty else {
+            return false
+        }
         let providers = info.itemProviders(for: [
             UTType.fileURL.identifier,
             UTType.image.identifier,
@@ -480,6 +508,59 @@ private struct BoardDropDelegate: DropDelegate {
             return false
         }
         model.importProviders(providers, to: category)
+        return true
+    }
+}
+
+private struct CategoryCopyDropDelegate: DropDelegate {
+    let model: BoardModel
+    let category: BoardCategory
+    @Binding var targetedCategory: BoardCategory?
+
+    private func providers(from info: DropInfo) -> [NSItemProvider] {
+        info.itemProviders(for: [BoardModel.boardItemDragTypeIdentifier])
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        category != model.activeCategory && !providers(from: info).isEmpty
+    }
+
+    func dropEntered(info: DropInfo) {
+        if validateDrop(info: info) {
+            targetedCategory = category
+        }
+    }
+
+    func dropExited(info: DropInfo) {
+        if targetedCategory == category {
+            targetedCategory = nil
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        validateDrop(info: info) ? DropProposal(operation: .copy) : nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard validateDrop(info: info), let provider = providers(from: info).first else {
+            targetedCategory = nil
+            return false
+        }
+
+        provider.loadDataRepresentation(
+            forTypeIdentifier: BoardModel.boardItemDragTypeIdentifier
+        ) { data, _ in
+            guard let data,
+                  let rawID = String(data: data, encoding: .utf8),
+                  let id = UUID(uuidString: rawID)
+            else {
+                return
+            }
+            DispatchQueue.main.async {
+                _ = model.copyImage(id, to: category)
+            }
+        }
+        targetedCategory = nil
         return true
     }
 }

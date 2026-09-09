@@ -18,8 +18,9 @@ enum MacCoreTests {
         try testPanelGeometryClampsExpandedPanelToCompactBounds()
         try testVerticalRailDragStaysAttachedToRightEdge()
         try testPanelStaysExpandedWhileDragging()
+        try testCopyImageToAnotherCategoryPreservesSourceAndPersists()
         try testImageDragProviderExportsImageAndFile()
-        print("macOS core tests passed (10 tests)")
+        print("macOS core tests passed (11 tests)")
     }
 
     private static func testNewContentStaysBelowPinsAndPersists() throws {
@@ -269,6 +270,10 @@ enum MacCoreTests {
             provider.canLoadObject(ofClass: NSImage.self),
             "image drag no longer exports image data"
         )
+        try check(
+            provider.hasItemConformingToTypeIdentifier(BoardModel.boardItemDragTypeIdentifier),
+            "image drag no longer identifies its internal source item"
+        )
 
         var loadFinished = false
         var receivedURL: URL?
@@ -313,6 +318,69 @@ enum MacCoreTests {
             exportedData == managedData,
             "persistent drag copy does not match the managed image"
         )
+
+        var internalIDLoadFinished = false
+        var receivedInternalID: UUID?
+        provider.loadDataRepresentation(
+            forTypeIdentifier: BoardModel.boardItemDragTypeIdentifier
+        ) { data, _ in
+            if let data,
+               let rawID = String(data: data, encoding: .utf8) {
+                receivedInternalID = UUID(uuidString: rawID)
+            }
+            internalIDLoadFinished = true
+        }
+        let internalIDTimeout = Date().addingTimeInterval(3)
+        while !internalIDLoadFinished && Date() < internalIDTimeout {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        try check(internalIDLoadFinished, "internal drag item ID did not finish loading")
+        try check(receivedInternalID == item.id, "internal drag item ID changed")
+    }
+
+    private static func testCopyImageToAnotherCategoryPreservesSourceAndPersists() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        let image = NSImage(
+            size: NSSize(width: 8, height: 8),
+            flipped: false
+        ) { rect in
+            NSColor.systemGreen.setFill()
+            rect.fill()
+            return true
+        }
+        model.addImages([image], to: .inbox)
+
+        let source = try require(model.orderedItems(in: .inbox).first, "missing copy source")
+        let sourceURL = try require(model.imageURL(for: source), "missing copy source image")
+        let sourceData = try Data(contentsOf: sourceURL)
+        try check(model.copyImage(source.id, to: .reference), "image copy was rejected")
+
+        let remainingSource = try require(
+            model.orderedItems(in: .inbox).first,
+            "copy removed the source image"
+        )
+        let copied = try require(
+            model.orderedItems(in: .reference).first,
+            "target category did not receive the copy"
+        )
+        let copiedURL = try require(model.imageURL(for: copied), "copied image file is missing")
+        try check(remainingSource.id == source.id, "copy changed the source item")
+        try check(copied.id != source.id, "copy reused the source item ID")
+        try check(copied.imageRelativePath != source.imageRelativePath, "copy reused the managed image path")
+        try check(!copied.isPinned && copied.order == 0, "copy did not enter the normal target region")
+        let copiedData = try Data(contentsOf: copiedURL)
+        try check(copiedData == sourceData, "copied image data changed")
+        try check(
+            !model.copyImage(source.id, to: .inbox),
+            "dropping onto the source category created another copy"
+        )
+
+        let reloaded = BoardModel(store: store, monitorsClipboard: false)
+        try check(reloaded.orderedItems(in: .inbox).map(\.id) == [source.id], "source did not persist")
+        try check(reloaded.orderedItems(in: .reference).map(\.id) == [copied.id], "copy did not persist")
     }
 
     private static func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
