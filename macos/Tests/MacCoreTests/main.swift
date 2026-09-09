@@ -339,6 +339,7 @@ enum MacCoreTests {
         let sourceURL = try require(model.imageURL(for: source), "missing copy source image")
         let sourceData = try Data(contentsOf: sourceURL)
         let provider = model.dragProvider(for: source)
+        model.selectCategory(.reference)
         model.copyDraggedImageProvider(provider, to: .reference)
         let copyTimeout = Date().addingTimeInterval(3)
         while model.orderedItems(in: .reference).isEmpty && Date() < copyTimeout {

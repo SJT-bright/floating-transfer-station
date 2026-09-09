@@ -549,9 +549,7 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard validateDrop(info: info),
-              let provider = provider(from: info)
-        else {
+        guard let provider = provider(from: info) else {
             targetedCategory = nil
             return false
         }
