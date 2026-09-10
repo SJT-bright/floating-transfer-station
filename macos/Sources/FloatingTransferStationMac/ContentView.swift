@@ -390,6 +390,7 @@ struct ContentView: View {
 private struct ItemCard: View {
     @ObservedObject var model: BoardModel
     let item: BoardItem
+    @State private var showsFullText = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -442,12 +443,30 @@ private struct ItemCard: View {
             .buttonStyle(.borderless)
 
             if item.kind == .text {
-                Text(item.text ?? "")
+                Text(item.textPreview)
                     .font(.system(size: 13))
+                    .lineLimit(12)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .onDrag {
                         model.dragProvider(for: item)
+                    }
+                Button("查看全文") { showsFullText = true }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                    .sheet(isPresented: $showsFullText) {
+                        VStack(spacing: 12) {
+                            HStack {
+                                Text("文字全文").font(.headline)
+                                Spacer()
+                                Button("复制全文") { model.copyToClipboard(item) }
+                                Button("关闭") { showsFullText = false }
+                                    .keyboardShortcut(.cancelAction)
+                            }
+                            FullTextReader(text: item.text ?? "")
+                        }
+                        .padding(16)
+                        .frame(width: 420, height: 440)
                     }
             } else if let url = model.imageURL(for: item),
                       let image = NSImage(contentsOf: url) {
@@ -512,6 +531,39 @@ private struct ItemCard: View {
                 model.delete(item.id)
             }
         }
+    }
+}
+
+private struct FullTextReader: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        let textView = NSTextView(frame: .zero)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.font = .systemFont(ofSize: 14)
+        textView.textColor = .labelColor
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 400, height: CGFloat.greatestFiniteMagnitude)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.layoutManager?.allowsNonContiguousLayout = true
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView,
+              textView.string != text else { return }
+        textView.string = text
     }
 }
 

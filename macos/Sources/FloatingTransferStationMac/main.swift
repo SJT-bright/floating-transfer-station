@@ -14,7 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var verticalDragStartMouseY: Double?
     private var verticalDragVisibleFrame: NSRect?
     private var isProgrammaticTransition = false
-    private var transitionGeneration = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -56,9 +55,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.delegate = self
-        panel.contentView = NSHostingView(
+        let hostingView = NSHostingView(
             rootView: ContentView(model: model, presentation: presentation)
         )
+        // The panel owns its size. Content-derived window constraints otherwise
+        // fight the narrow handle while SwiftUI measures the expanded board.
+        hostingView.sizingOptions = []
+        panel.contentView = hostingView
         panel.isReleasedWhenClosed = false
         self.panel = panel
         presentation.onHoverChanged = { [weak self] isInside in
@@ -153,7 +156,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             verticalDragStartTop = expandedTop
             verticalDragStartMouseY = gestureStartMouseY
             verticalDragVisibleFrame = visibleFrame
-            transitionGeneration += 1
             isProgrammaticTransition = true
         }
 
@@ -209,15 +211,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        if presentation.isExpanded == expanded,
-           !isProgrammaticTransition {
+        if presentation.isExpanded == expanded || verticalDragStartTop != nil {
             return
         }
 
-        transitionGeneration += 1
-        let generation = transitionGeneration
         isProgrammaticTransition = true
-        presentation.setExpanded(expanded)
+        defer { isProgrammaticTransition = false }
 
         let expandedFrame = PanelGeometry.expandedFrame(
             size: expandedSize,
@@ -228,6 +227,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? expandedFrame
             : PanelGeometry.collapsedFrame(around: expandedFrame, in: visibleFrame)
 
+        // Never lay out a full board at the 56-point handle width, nor animate
+        // through intermediate widths (long text reflows on every frame).
+        if !expanded {
+            presentation.setExpanded(false)
+        }
         panel.minSize = expanded
             ? NSSize(width: min(380, visibleFrame.width), height: min(440, visibleFrame.height))
             : PanelGeometry.collapsedSize
@@ -237,28 +241,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel.styleMask.remove(.resizable)
         }
         panel.standardWindowButton(.closeButton)?.isHidden = true
-
-        let finishTransition = { [weak self] in
-            guard let self,
-                  self.transitionGeneration == generation
-            else {
-                return
-            }
-            self.isProgrammaticTransition = false
-        }
-
-        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            panel.setFrame(targetFrame, display: true)
-            finishTransition()
-            return
-        }
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.26
-            context.allowsImplicitAnimation = true
-            panel.animator().setFrame(targetFrame, display: true)
-        } completionHandler: {
-            finishTransition()
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        panel.setFrame(targetFrame, display: false)
+        if expanded {
+            presentation.setExpanded(true)
         }
     }
 

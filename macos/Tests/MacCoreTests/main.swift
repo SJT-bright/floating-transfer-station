@@ -22,7 +22,35 @@ enum MacCoreTests {
         try testImageDragProviderExportsImageAndFile()
         try testClipboardAlwaysGoesToInbox()
         try testCustomCategoriesPersistAndKeepItems()
-        print("macOS core tests passed (13 tests)")
+        try testLongTextPreviewPreservesFullContent()
+        print("macOS core tests passed (14 tests)")
+    }
+
+    private static func testLongTextPreviewPreservesFullContent() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        let fullText = String(repeating: "中文👨‍👩‍👧‍👦e\u{301}\n", count: 3_000)
+        model.addText(fullText)
+        let item = try require(model.items.first, "long text not stored")
+        try check(item.textPreview.count == 600, "preview exceeded its layout budget")
+        try check(item.textPreview == String(fullText.prefix(600)), "preview broke Unicode characters")
+        try check(store.loadBoard().first?.text == fullText, "preview truncated the stored text")
+        let provider = model.dragProvider(for: item)
+        var received: String?
+        var finished = false
+        provider.loadObject(ofClass: NSString.self) { value, _ in
+            DispatchQueue.main.async {
+                received = value as? String
+                finished = true
+            }
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while !finished && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        try check(finished && received == fullText, "drag exported only the preview")
     }
 
     private static func testClipboardAlwaysGoesToInbox() throws {

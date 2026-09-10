@@ -59,6 +59,9 @@ struct BoardItem: Codable, Identifiable, Equatable {
     var imageRelativePath: String?
     var isPinned: Bool
 
+    // Bound list-layout work without modifying the stored/dragged text.
+    var textPreview: String { String((text ?? "").prefix(600)) }
+
     init(
         id: UUID = UUID(),
         kind: BoardItemKind,
