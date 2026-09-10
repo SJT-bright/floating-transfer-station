@@ -1,5 +1,30 @@
 import AppKit
 import Combine
+import QuartzCore
+
+enum PanelRevealMotion {
+    static let animationKey = "panelReveal"
+
+    static func animation(reduceMotion: Bool) -> CAAnimationGroup {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        let group = CAAnimationGroup()
+        group.duration = reduceMotion ? 0.12 : 0.24
+        fade.duration = group.duration
+        if reduceMotion {
+            group.animations = [fade]
+        } else {
+            let slide = CABasicAnimation(keyPath: "transform.translation.x")
+            slide.fromValue = 28
+            slide.toValue = 0
+            slide.duration = group.duration
+            group.animations = [fade, slide]
+        }
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        return group
+    }
+}
 
 final class PanelPresentation: ObservableObject {
     @Published private(set) var isExpanded = false

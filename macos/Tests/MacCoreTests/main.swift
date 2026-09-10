@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import UniformTypeIdentifiers
+import QuartzCore
 
 private struct TestFailure: Error, CustomStringConvertible {
     let description: String
@@ -23,7 +24,26 @@ enum MacCoreTests {
         try testClipboardAlwaysGoesToInbox()
         try testCustomCategoriesPersistAndKeepItems()
         try testLongTextPreviewPreservesFullContent()
-        print("macOS core tests passed (14 tests)")
+        try testRevealMotionDoesNotAnimateLayout()
+        print("macOS core tests passed (15 tests)")
+    }
+
+    private static func testRevealMotionDoesNotAnimateLayout() throws {
+        let normal = PanelRevealMotion.animation(reduceMotion: false)
+        let animations = normal.animations?.compactMap { $0 as? CABasicAnimation } ?? []
+        try check(animations.map(\.keyPath) == ["opacity", "transform.translation.x"], "reveal must not animate frame/bounds")
+        try check(normal.duration > 0 && normal.duration < 0.4, "reveal is missing or too slow")
+        try check(animations.allSatisfy { $0.duration == normal.duration }, "reveal components do not share the intended duration")
+        try check((animations.last?.toValue as? NSNumber)?.doubleValue == 0, "reveal leaves content shifted")
+        let reduced = PanelRevealMotion.animation(reduceMotion: true)
+        try check(reduced.animations?.count == 1, "reduced motion still slides")
+        try check((reduced.animations?.first as? CABasicAnimation)?.keyPath == "opacity", "reduced motion should only fade")
+        let layer = CALayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 480, height: 560)
+        let bounds = layer.bounds
+        layer.add(normal, forKey: PanelRevealMotion.animationKey)
+        layer.removeAnimation(forKey: PanelRevealMotion.animationKey)
+        try check(layer.bounds == bounds && CATransform3DIsIdentity(layer.transform) && layer.opacity == 1, "interrupted reveal changed layout or visibility")
     }
 
     private static func testLongTextPreviewPreservesFullContent() throws {

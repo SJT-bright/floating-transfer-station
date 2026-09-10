@@ -61,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The panel owns its size. Content-derived window constraints otherwise
         // fight the narrow handle while SwiftUI measures the expanded board.
         hostingView.sizingOptions = []
+        hostingView.wantsLayer = true
         panel.contentView = hostingView
         panel.isReleasedWhenClosed = false
         self.panel = panel
@@ -150,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
         if verticalDragStartTop == nil {
+            panel.contentView?.layer?.removeAnimation(forKey: PanelRevealMotion.animationKey)
             guard let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
                 return
             }
@@ -217,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         isProgrammaticTransition = true
         defer { isProgrammaticTransition = false }
+        panel.contentView?.layer?.removeAnimation(forKey: PanelRevealMotion.animationKey)
 
         let expandedFrame = PanelGeometry.expandedFrame(
             size: expandedSize,
@@ -246,6 +249,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.setFrame(targetFrame, display: false)
         if expanded {
             presentation.setExpanded(true)
+            panel.contentView?.layoutSubtreeIfNeeded()
+            // Animate only compositing, never the frame/bounds used by text layout.
+            panel.contentView?.layer?.add(
+                PanelRevealMotion.animation(
+                    reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                ),
+                forKey: PanelRevealMotion.animationKey
+            )
         }
     }
 
