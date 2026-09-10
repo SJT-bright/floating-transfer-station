@@ -20,7 +20,67 @@ enum MacCoreTests {
         try testPanelStaysExpandedWhileDragging()
         try testCopyImageToAnotherCategoryPreservesSourceAndPersists()
         try testImageDragProviderExportsImageAndFile()
-        print("macOS core tests passed (11 tests)")
+        try testClipboardAlwaysGoesToInbox()
+        try testCustomCategoriesPersistAndKeepItems()
+        print("macOS core tests passed (13 tests)")
+    }
+
+    private static func testClipboardAlwaysGoesToInbox() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        let custom = try require(model.addCategory(named: "道具"), "custom category missing")
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+            NSColor.systemBlue.setFill()
+            rect.fill()
+            return true
+        }
+        for category in [.customerOriginal, .reference, .prompt, custom] {
+            model.selectCategory(category)
+            pasteboard.clearContents()
+            pasteboard.setString("自动文字", forType: .string)
+            model.capturePasteboard(pasteboard, force: false)
+            pasteboard.clearContents()
+            pasteboard.writeObjects([image])
+            model.capturePasteboard(pasteboard, force: false)
+            try check(model.orderedItems(in: category).isEmpty, "clipboard leaked into selected category")
+            try check(model.activeCategory == category, "capture changed the browsing category")
+        }
+        try check(model.orderedItems(in: .inbox).count == 8, "clipboard did not collect all content in Inbox")
+        let filePath = try store.storeImage(image)
+        let fileURL = try require(store.managedImageURL(relativePath: filePath), "missing file")
+        pasteboard.clearContents()
+        pasteboard.writeObjects([fileURL as NSURL])
+        model.capturePasteboard(pasteboard, force: true)
+        try check(model.orderedItems(in: .inbox).count == 9, "manual capture/file image missed Inbox")
+    }
+
+    private static func testCustomCategoriesPersistAndKeepItems() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        try check(model.addCategory(named: "  ") == nil, "blank category accepted")
+        let custom = try require(model.addCategory(named: "道具资产"), "category creation failed")
+        model.addText("待整理")
+        let id = try require(model.orderedItems(in: .inbox).first?.id, "missing source")
+        model.move(id, to: custom)
+        model.addText("触发再次保存")
+        model.renameCategory(custom, to: "物品")
+        let reloaded = BoardModel(store: store, monitorsClipboard: false)
+        try check(reloaded.categories == BoardCategory.visibleCases + [custom], "custom category not restored")
+        try check(reloaded.displayName(for: custom) == "物品", "custom name not restored")
+        try check(reloaded.orderedItems(in: custom).map(\.id) == [id], "normalization dropped custom items")
+        let data = try JSONEncoder().encode(custom)
+        try check(String(data: data, encoding: .utf8) == "\"\(custom.rawValue)\"", "category JSON is no longer a string")
+        try store.saveSettings(.default)
+        let recovered = BoardModel(store: store, monitorsClipboard: false)
+        try check(recovered.categories.contains(custom), "category containing items disappeared after settings recovery")
+        recovered.addText("新内容")
+        try check(store.loadBoard().contains(where: { $0.id == id }), "recovered category items were lost on save")
     }
 
     private static func testNewContentStaysBelowPinsAndPersists() throws {

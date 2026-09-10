@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 final class BoardModel: ObservableObject {
     @Published private(set) var items: [BoardItem]
     @Published var activeCategory: BoardCategory
-    @Published var defaultCaptureCategory: BoardCategory
+    let defaultCaptureCategory: BoardCategory = .inbox
     @Published private(set) var settings: WindowSettings
     @Published private(set) var statusText = ""
 
@@ -22,7 +22,6 @@ final class BoardModel: ObservableObject {
         items = Self.normalized(store.loadBoard())
         settings = store.loadSettings()
         activeCategory = .inbox
-        defaultCaptureCategory = .inbox
         lastPasteboardChangeCount = NSPasteboard.general.changeCount
 
         if monitorsClipboard {
@@ -46,8 +45,32 @@ final class BoardModel: ObservableObject {
 
     func selectCategory(_ category: BoardCategory) {
         activeCategory = category
-        defaultCaptureCategory = category
-        showStatus("新复制的内容将进入“\(displayName(for: category))”")
+    }
+
+    var categories: [BoardCategory] {
+        var seen = Set<BoardCategory>()
+        return (BoardCategory.visibleCases + settings.customCategories + items.map(\.category))
+            .filter { seen.insert($0).inserted }
+    }
+
+    @discardableResult
+    func addCategory(named rawName: String) -> BoardCategory? {
+        let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(6))
+        guard !name.isEmpty else { return nil }
+        let category = BoardCategory(rawValue: "Custom-" + UUID().uuidString.lowercased())
+        var updated = settings
+        updated.customCategories.append(category)
+        updated.categoryNames[category.rawValue] = name
+        do {
+            try store.saveSettings(updated)
+            settings = updated
+            activeCategory = category
+            showStatus("已添加“\(name)”，自动收集仍进入待分类。")
+            return category
+        } catch {
+            showStatus("分类未保存，请重试。")
+            return nil
+        }
     }
 
     func captureCurrentClipboard() {
@@ -455,8 +478,7 @@ final class BoardModel: ObservableObject {
         clipboardTimer = timer
     }
 
-    private func capturePasteboard(force: Bool) {
-        let pasteboard = NSPasteboard.general
+    func capturePasteboard(_ pasteboard: NSPasteboard = .general, force: Bool) {
         guard force || pasteboard.changeCount != lastPasteboardChangeCount else {
             return
         }
@@ -535,7 +557,10 @@ final class BoardModel: ObservableObject {
     }
 
     private static func normalized(_ source: [BoardItem]) -> [BoardItem] {
-        return BoardCategory.visibleCases.flatMap { category in
+        var seen = Set<BoardCategory>()
+        let categories = (BoardCategory.visibleCases + source.map(\.category))
+            .filter { seen.insert($0).inserted }
+        return categories.flatMap { category in
             source
                 .filter { $0.category == category }
                 .sorted(by: displayOrder)

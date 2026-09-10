@@ -12,6 +12,8 @@ struct ContentView: View {
     @State private var renameDraft = ""
     @State private var confirmsClear = false
     @State private var dropTargetCategory: BoardCategory?
+    @State private var isAddingCategory = false
+    @State private var newCategoryName = ""
 
     private var translucentPanelBackground: Color {
         if reduceTransparency {
@@ -85,6 +87,16 @@ struct ContentView: View {
             }
         } message: {
             Text("分类名可以留空，最多保留 6 个可见字符。")
+        }
+        .alert("添加分类", isPresented: $isAddingCategory) {
+            TextField("分类名称（最多 6 个字符）", text: $newCategoryName)
+            Button("取消", role: .cancel) {}
+            Button("添加") {
+                model.addCategory(named: newCategoryName)
+            }
+            .disabled(newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("复制内容始终进入待分类，你可以主动拖动图片到新分类。")
         }
         .alert("清空当前分类？", isPresented: $confirmsClear) {
             Button("取消", role: .cancel) {}
@@ -250,7 +262,48 @@ struct ContentView: View {
 
     private var categoryRail: some View {
         VStack(spacing: 8) {
-            ForEach(BoardCategory.visibleCases) { category in
+            Button {
+                newCategoryName = ""
+                isAddingCategory = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 16, weight: .semibold))
+                    .frame(maxWidth: .infinity, minHeight: 28)
+            }
+            .buttonStyle(.plain)
+            .help("添加分类")
+            .accessibilityLabel("添加分类")
+
+            ScrollView {
+                categoryButtons
+            }
+
+            VStack(spacing: 5) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.45))
+                    .frame(width: 24, height: 3)
+                Image(systemName: "arrow.up.and.down")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("按住拖动")
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("上下拖动悬浮中转站")
+        }
+        .padding(8)
+        .frame(width: 82)
+        .help("按住最右侧栏上下拖动")
+        .contentShape(Rectangle())
+        .highPriorityGesture(panelVerticalDragGesture(minimumDistance: 8))
+    }
+
+    private var categoryButtons: some View {
+        VStack(spacing: 8) {
+            ForEach(model.categories) { category in
                 Button {
                     model.selectCategory(category)
                 } label: {
@@ -315,29 +368,7 @@ struct ContentView: View {
                     }
                 }
             }
-
-            VStack(spacing: 5) {
-                Spacer(minLength: 8)
-                Capsule()
-                    .fill(Color.secondary.opacity(0.45))
-                    .frame(width: 24, height: 3)
-                Image(systemName: "arrow.up.and.down")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("按住拖动")
-                    .font(.system(size: 9, weight: .medium))
-            }
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("上下拖动悬浮中转站")
         }
-        .padding(8)
-        .frame(width: 82)
-        .help("按住最右侧栏上下拖动")
-        .contentShape(Rectangle())
-        .highPriorityGesture(panelVerticalDragGesture(minimumDistance: 8))
     }
 
     private func icon(for category: BoardCategory) -> String {
@@ -350,6 +381,8 @@ struct ContentView: View {
             return "text.quote"
         case .inbox:
             return "tray"
+        default:
+            return "folder"
         }
     }
 }
@@ -387,7 +420,7 @@ private struct ItemCard: View {
                 .help("复制")
 
                 Menu {
-                    ForEach(BoardCategory.visibleCases.filter { $0 != item.category }) { category in
+                    ForEach(model.categories.filter { $0 != item.category }) { category in
                         Button(model.displayName(for: category)) {
                             model.move(item.id, to: category)
                         }
@@ -468,7 +501,7 @@ private struct ItemCard: View {
                 model.copyToClipboard(item)
             }
             Menu("移动到") {
-                ForEach(BoardCategory.visibleCases.filter { $0 != item.category }) { category in
+                ForEach(model.categories.filter { $0 != item.category }) { category in
                     Button(model.displayName(for: category)) {
                         model.move(item.id, to: category)
                     }
