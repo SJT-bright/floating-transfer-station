@@ -25,7 +25,83 @@ enum MacCoreTests {
         try testCustomCategoriesPersistAndKeepItems()
         try testLongTextPreviewPreservesFullContent()
         try testRevealMotionDoesNotAnimateLayout()
-        print("macOS core tests passed (15 tests)")
+        try testCollapseMotionDoesNotAnimateLayout()
+        try testCollapseCancellationRejectsStaleCompletion()
+        try testCollapseRunsOnHostedLayerAndFinishes()
+        print("macOS core tests passed (18 tests)")
+    }
+
+    private static func testCollapseMotionDoesNotAnimateLayout() throws {
+        let normal = PanelCollapseMotion.animation(reduceMotion: false)
+        let animations = normal.animations?.compactMap { $0 as? CABasicAnimation } ?? []
+        try check(animations.map(\.keyPath) == ["opacity", "transform.translation.x"], "collapse must not animate frame/bounds")
+        try check(normal.duration == 0.20, "collapse duration changed")
+        try check(animations.allSatisfy { $0.duration == normal.duration }, "collapse components finish at different times")
+        try check((animations.first?.fromValue as? NSNumber)?.doubleValue == 1, "collapse must start visible")
+        try check((animations.first?.toValue as? NSNumber)?.doubleValue == 0, "collapse must fade out")
+        try check((animations.last?.toValue as? NSNumber)?.doubleValue == 28, "collapse must move toward the right edge")
+        let reduced = PanelCollapseMotion.animation(reduceMotion: true)
+        try check(reduced.duration == 0.12 && reduced.animations?.count == 1, "reduced motion still slides")
+        try check((reduced.animations?.first as? CABasicAnimation)?.keyPath == "opacity", "reduced collapse must only fade")
+    }
+
+    private static func testCollapseCancellationRejectsStaleCompletion() throws {
+        let motion = PanelCollapseMotion()
+        let layer = CALayer()
+        layer.bounds = CGRect(x: 0, y: 0, width: 480, height: 560)
+        let bounds = layer.bounds
+        var completed = 0
+        motion.start(on: layer, reduceMotion: false) { completed += 1 }
+        let oldAnimation = try require(layer.animation(forKey: PanelCollapseMotion.animationKey), "collapse did not start")
+        try check(motion.isRunning && completed == 0, "collapse committed before its animation finished")
+        motion.cancel()
+        try check(!motion.isRunning && layer.animation(forKey: PanelCollapseMotion.animationKey) == nil, "cancel did not remove collapse")
+        try check(layer.bounds == bounds && CATransform3DIsIdentity(layer.transform) && layer.opacity == 1, "cancelled collapse left a hidden or shifted panel")
+
+        motion.start(on: layer, reduceMotion: false) { completed += 1 }
+        motion.animationDidStop(oldAnimation, finished: true)
+        try check(motion.isRunning && completed == 0, "stale completion collapsed a reopened panel")
+        let current = try require(layer.animation(forKey: PanelCollapseMotion.animationKey), "new collapse missing")
+        motion.animationDidStop(current, finished: true)
+        try check(completed == 1 && !motion.isRunning, "completed collapse did not commit exactly once")
+        motion.animationDidStop(current, finished: true)
+        try check(completed == 1, "collapse completion ran twice")
+        try check(layer.bounds == bounds && CATransform3DIsIdentity(layer.transform) && layer.opacity == 1, "finished collapse left animation state behind")
+    }
+
+    private static func testCollapseRunsOnHostedLayerAndFinishes() throws {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+        let window = NSWindow(
+            contentRect: NSRect(x: -10000, y: -10000, width: 120, height: 80),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 120, height: 80))
+        view.wantsLayer = true
+        window.contentView = view
+        window.orderFrontRegardless()
+        let layer = try require(view.layer, "hosted layer missing")
+        layer.backgroundColor = NSColor.systemBlue.cgColor
+        let motion = PanelCollapseMotion()
+        var completed = 0
+        motion.start(on: layer, reduceMotion: false) { completed += 1 }
+        CATransaction.flush()
+        var observedIntermediateFrame = false
+        let deadline = Date().addingTimeInterval(1)
+        while motion.isRunning && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            if let frame = layer.presentation(), frame.opacity > 0 && frame.opacity < 1,
+               frame.transform.m41 > 0 && frame.transform.m41 < 28 {
+                observedIntermediateFrame = true
+            }
+        }
+        try check(observedIntermediateFrame, "hosted collapse never displayed a partial slide/fade")
+        try check(completed == 1 && !motion.isRunning, "native animation completion did not finish collapse")
+        try check(layer.bounds == view.bounds && layer.opacity == 1 && CATransform3DIsIdentity(layer.transform), "hosted animation changed layout or left residual opacity")
     }
 
     private static func testRevealMotionDoesNotAnimateLayout() throws {

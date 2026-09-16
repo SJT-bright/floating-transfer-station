@@ -26,6 +26,66 @@ enum PanelRevealMotion {
     }
 }
 
+final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
+    static let animationKey = "panelCollapse"
+    private static let tokenKey = "collapseToken"
+    private weak var layer: CALayer?
+    private var token: String?
+    private var completion: (() -> Void)?
+
+    var isRunning: Bool { token != nil }
+
+    static func animation(reduceMotion: Bool) -> CAAnimationGroup {
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        let group = CAAnimationGroup()
+        group.duration = reduceMotion ? 0.12 : 0.20
+        fade.duration = group.duration
+        if reduceMotion {
+            group.animations = [fade]
+        } else {
+            let slide = CABasicAnimation(keyPath: "transform.translation.x")
+            slide.fromValue = 0
+            slide.toValue = 28
+            slide.duration = group.duration
+            group.animations = [fade, slide]
+        }
+        group.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        group.fillMode = .forwards
+        group.isRemovedOnCompletion = false
+        return group
+    }
+
+    func start(on layer: CALayer, reduceMotion: Bool, completion: @escaping () -> Void) {
+        cancel()
+        let token = UUID().uuidString
+        self.layer = layer
+        self.token = token
+        self.completion = completion
+        let animation = Self.animation(reduceMotion: reduceMotion)
+        animation.setValue(token, forKey: Self.tokenKey)
+        animation.delegate = self
+        layer.add(animation, forKey: Self.animationKey)
+    }
+
+    func cancel() {
+        token = nil
+        completion = nil
+        layer?.removeAnimation(forKey: Self.animationKey)
+        layer = nil
+    }
+
+    func animationDidStop(_ animation: CAAnimation, finished flag: Bool) {
+        guard let token, animation.value(forKey: Self.tokenKey) as? String == token else {
+            return
+        }
+        let callback = flag ? completion : nil
+        cancel()
+        callback?()
+    }
+}
+
 final class PanelPresentation: ObservableObject {
     @Published private(set) var isExpanded = false
 

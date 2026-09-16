@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var model: BoardModel?
     private var launchAtLoginMenuItem: NSMenuItem?
     private var collapseWorkItem: DispatchWorkItem?
+    private let collapseMotion = PanelCollapseMotion()
     private var expandedSize = NSSize(width: 442, height: 560)
     private var expandedTop = 80.0
     private var verticalDragStartTop: Double?
@@ -150,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
+        collapseMotion.cancel()
         if verticalDragStartTop == nil {
             panel.contentView?.layer?.removeAnimation(forKey: PanelRevealMotion.animationKey)
             guard let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
@@ -207,6 +209,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func setExpanded(_ expanded: Bool) {
+        if expanded {
+            collapseMotion.cancel()
+        }
+        guard presentation.isExpanded != expanded,
+              verticalDragStartTop == nil,
+              let panel
+        else {
+            return
+        }
+
+        if expanded {
+            applyExpanded(true)
+            return
+        }
+        guard !collapseMotion.isRunning else {
+            return
+        }
+        guard let layer = panel.contentView?.layer else {
+            applyExpanded(false)
+            return
+        }
+        layer.removeAnimation(forKey: PanelRevealMotion.animationKey)
+        collapseMotion.start(
+            on: layer,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        ) { [weak self] in
+            guard let self, let panel = self.panel,
+                  !panel.frame.contains(NSEvent.mouseLocation),
+                  self.verticalDragStartTop == nil
+            else {
+                return
+            }
+            if PanelInteractionPolicy.shouldCollapse(
+                pressedMouseButtons: NSEvent.pressedMouseButtons,
+                hasAttachedSheet: panel.attachedSheet != nil
+            ) {
+                self.applyExpanded(false)
+            } else if panel.attachedSheet == nil {
+                self.scheduleCollapse(after: 0.12)
+            }
+        }
+    }
+
+    private func applyExpanded(_ expanded: Bool) {
         guard let panel,
               let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame
         else {
