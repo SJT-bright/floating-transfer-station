@@ -28,7 +28,27 @@ enum MacCoreTests {
         try testCollapseMotionDoesNotAnimateLayout()
         try testCollapseCancellationRejectsStaleCompletion()
         try testCollapseRunsOnHostedLayerAndFinishes()
-        print("macOS core tests passed (18 tests)")
+        try testAppearancePersistsWithoutChangingCategories()
+        print("macOS core tests passed (19 tests)")
+    }
+
+    private static func testAppearancePersistsWithoutChangingCategories() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let legacy = Data(#"{"panelWidth":420,"windowHeight":520,"top":90,"categoryNames":{"Inbox":"收藏"},"customCategories":["Custom-test"]}"#.utf8)
+        let settings = try JSONDecoder().decode(WindowSettings.self, from: legacy)
+        try check(settings.appearance == nil && settings.panelWidth == 420 && settings.customCategories.count == 1, "legacy settings were lost")
+        try store.saveSettings(settings)
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        let appearance = PanelAppearance(textBrightness: 0.8, textOpacity: 0.7, backgroundBrightness: 0.1, backgroundOpacity: 0.6)
+        model.updateAppearance(appearance)
+        try check(store.loadSettings().appearance == appearance, "appearance did not persist")
+        try check(store.loadSettings().categoryNames == settings.categoryNames && store.loadSettings().customCategories == settings.customCategories, "appearance changed categories")
+        model.updateAppearance(nil)
+        try check(store.loadSettings() == settings, "reset changed unrelated settings")
+        let invalid = PanelAppearance(textBrightness: -1, textOpacity: 0, backgroundBrightness: 5, backgroundOpacity: 2).normalized
+        try check(invalid.textBrightness == 0 && invalid.textOpacity == 0.2 && invalid.backgroundBrightness == 1 && invalid.backgroundOpacity == 1, "appearance values not bounded")
     }
 
     private static func testCollapseMotionDoesNotAnimateLayout() throws {

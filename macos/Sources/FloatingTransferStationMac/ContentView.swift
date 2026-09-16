@@ -14,15 +14,22 @@ struct ContentView: View {
     @State private var dropTargetCategory: BoardCategory?
     @State private var isAddingCategory = false
     @State private var newCategoryName = ""
+    @State private var showsAppearance = false
+
+    private var appearance: PanelAppearance {
+        model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
+    }
+
+    private var textColor: Color {
+        Color(white: appearance.textBrightness).opacity(appearance.textOpacity)
+    }
 
     private var translucentPanelBackground: Color {
         if reduceTransparency {
             return Color(nsColor: .windowBackgroundColor)
         }
 
-        return colorScheme == .dark
-            ? Color.black.opacity(0.34)
-            : Color.white.opacity(0.34)
+        return Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity)
     }
 
     var body: some View {
@@ -34,6 +41,7 @@ struct ContentView: View {
             }
         }
         .contentShape(Rectangle())
+        .foregroundStyle(textColor)
         .onHover(perform: presentation.handleHover)
         .onTapGesture {
             if !presentation.isExpanded {
@@ -124,11 +132,11 @@ struct ContentView: View {
 
             Image(systemName: "chevron.left.2")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(textColor.opacity(0.75))
 
             Text("移入")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(textColor.opacity(0.75))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background {
@@ -148,10 +156,28 @@ struct ContentView: View {
                     .lineLimit(1)
                 Text("\(model.orderedItems(in: model.activeCategory).count) 条内容")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(textColor.opacity(0.75))
             }
 
             Spacer(minLength: 8)
+
+            Button {
+                presentation.isEditingAppearance = true
+                presentation.handleHover(true)
+                showsAppearance = true
+            } label: {
+                Image(systemName: "circle.lefthalf.filled")
+            }
+            .help("外观设置：文字与背景")
+            .accessibilityLabel("外观设置")
+            .popover(isPresented: $showsAppearance, arrowEdge: .leading) {
+                AppearanceEditor(model: model)
+                    .foregroundStyle(Color.primary)
+                    .onDisappear {
+                        presentation.isEditingAppearance = false
+                        presentation.handleHover(false)
+                    }
+            }
 
             Button {
                 model.captureCurrentClipboard()
@@ -182,7 +208,7 @@ struct ContentView: View {
         .background(
             LinearGradient(
                 colors: [
-                    Color.white.opacity(colorScheme == .dark ? 0.055 : 0.24),
+                    Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity * 0.2),
                     Color.clear
                 ],
                 startPoint: .top,
@@ -198,11 +224,11 @@ struct ContentView: View {
             VStack(spacing: 14) {
                 Image(systemName: "square.and.arrow.down")
                     .font(.system(size: 38, weight: .light))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(textColor.opacity(0.75))
                     .padding(20)
                     .background(
                         Circle()
-                            .fill(Color.white.opacity(colorScheme == .dark ? 0.055 : 0.3))
+                            .fill(Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity * 0.2))
                     )
                     .overlay(
                         Circle()
@@ -213,7 +239,7 @@ struct ContentView: View {
                     .multilineTextAlignment(.center)
                 Text("也可以把图片或文字直接拖进窗口")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(textColor.opacity(0.75))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(28)
@@ -249,13 +275,13 @@ struct ContentView: View {
             Divider()
             Text(model.statusText)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(textColor.opacity(0.75))
                 .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
                 .background(
-                    Color.white.opacity(colorScheme == .dark ? 0.055 : 0.3)
+                    Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity * 0.2)
                 )
         }
     }
@@ -287,7 +313,7 @@ struct ContentView: View {
                 Text("按住拖动")
                     .font(.system(size: 9, weight: .medium))
             }
-            .foregroundStyle(.secondary)
+            .foregroundStyle(textColor.opacity(0.75))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .contentShape(Rectangle())
@@ -324,7 +350,7 @@ struct ContentView: View {
                             .multilineTextAlignment(.center)
                         Text("\(model.orderedItems(in: category).count)")
                             .font(.system(size: 9, design: .rounded))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(textColor.opacity(0.75))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 9)
@@ -387,12 +413,67 @@ struct ContentView: View {
     }
 }
 
+private struct AppearanceEditor: View {
+    @ObservedObject var model: BoardModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var appearance: PanelAppearance {
+        model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
+    }
+
+    private func control(_ title: String, key: WritableKeyPath<PanelAppearance, Double>,
+                         range: ClosedRange<Double> = 0...1, ends: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int((appearance[keyPath: key] * 100).rounded()))%")
+                    .monospacedDigit().foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(
+                get: { appearance[keyPath: key] },
+                set: { value in
+                    var updated = appearance
+                    updated[keyPath: key] = (value * 100).rounded() / 100
+                    model.updateAppearance(updated)
+                }
+            ), in: range)
+            .accessibilityLabel(title)
+            Text(ends).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("外观设置").font(.headline)
+            control("文字深浅", key: \.textBrightness, ends: "左侧黑色 · 右侧白色")
+            control("文字不透明度", key: \.textOpacity, range: 0.2...1, ends: "左侧淡 · 右侧清晰")
+            Divider()
+            control("背景深浅", key: \.backgroundBrightness, ends: "左侧黑色 · 右侧白色")
+            control("背景不透明度", key: \.backgroundOpacity, ends: "左侧透明 · 右侧实色")
+            Text("实时生效并自动保存，图片保持原样。").font(.caption).foregroundStyle(.secondary)
+            Button("恢复系统默认") { model.updateAppearance(nil) }
+        }
+        .padding(20)
+        .frame(width: 300)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 private struct ItemCard: View {
     @ObservedObject var model: BoardModel
     let item: BoardItem
     @State private var showsFullText = false
 
     @Environment(\.colorScheme) private var colorScheme
+
+    private var appearance: PanelAppearance {
+        model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
+    }
+
+    private var textColor: Color {
+        Color(white: appearance.textBrightness).opacity(appearance.textOpacity)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -402,7 +483,7 @@ private struct ItemCard: View {
                     systemImage: item.kind == .image ? "photo" : "text.alignleft"
                 )
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(textColor.opacity(0.75))
 
                 Spacer()
 
@@ -489,13 +570,14 @@ private struct ItemCard: View {
             } else {
                 Label("图片文件已丢失", systemImage: "exclamationmark.triangle")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(textColor.opacity(0.75))
             }
         }
         .padding(11)
+        .foregroundStyle(textColor)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(colorScheme == .dark ? 0.075 : 0.48))
+                .fill(Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity * 0.45))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)

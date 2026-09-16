@@ -126,7 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func scheduleCollapse(after delay: TimeInterval) {
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self else {
+            guard let self, !self.presentation.isEditingAppearance else {
                 return
             }
 
@@ -223,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             applyExpanded(true)
             return
         }
-        guard !collapseMotion.isRunning else {
+        guard !collapseMotion.isRunning, !presentation.isEditingAppearance else {
             return
         }
         guard let layer = panel.contentView?.layer else {
@@ -236,6 +236,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         ) { [weak self] in
             guard let self, let panel = self.panel,
+                  !self.presentation.isEditingAppearance,
                   !panel.frame.contains(NSEvent.mouseLocation),
                   self.verticalDragStartTop == nil
             else {

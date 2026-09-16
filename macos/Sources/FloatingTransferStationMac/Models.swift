@@ -141,7 +141,28 @@ struct BoardSnapshot: Codable {
     }
 }
 
+struct PanelAppearance: Codable, Equatable {
+    var textBrightness: Double
+    var textOpacity: Double
+    var backgroundBrightness: Double
+    var backgroundOpacity: Double
+
+    static func defaults(isDark: Bool) -> Self {
+        Self(textBrightness: isDark ? 1 : 0, textOpacity: 0.95,
+             backgroundBrightness: isDark ? 0 : 1, backgroundOpacity: 0.34)
+    }
+
+    var normalized: Self {
+        func clamp(_ value: Double, minimum: Double = 0) -> Double {
+            value.isFinite ? min(1, max(minimum, value)) : 1
+        }
+        return Self(textBrightness: clamp(textBrightness), textOpacity: clamp(textOpacity, minimum: 0.2),
+                    backgroundBrightness: clamp(backgroundBrightness), backgroundOpacity: clamp(backgroundOpacity))
+    }
+}
+
 struct WindowSettings: Codable, Equatable {
+    var appearance: PanelAppearance?
     var panelWidth: Double
     var windowHeight: Double
     var top: Double
@@ -179,6 +200,7 @@ struct WindowSettings: Codable, Equatable {
         case top
         case categoryNames
         case customCategories
+        case appearance
     }
 
     init(from decoder: Decoder) throws {
@@ -191,5 +213,6 @@ struct WindowSettings: Codable, Equatable {
             forKey: .categoryNames
         ) ?? [:]
         customCategories = try container.decodeIfPresent([BoardCategory].self, forKey: .customCategories) ?? []
+        appearance = try container.decodeIfPresent(PanelAppearance.self, forKey: .appearance)?.normalized
     }
 }

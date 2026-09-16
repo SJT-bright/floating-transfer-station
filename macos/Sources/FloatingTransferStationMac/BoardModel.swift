@@ -379,6 +379,18 @@ final class BoardModel: ObservableObject {
         }
     }
 
+    func updateAppearance(_ appearance: PanelAppearance?) {
+        var updated = settings
+        updated.appearance = appearance?.normalized
+        guard updated != settings else { return }
+        do {
+            try store.saveSettings(updated)
+            settings = updated
+        } catch {
+            showStatus("外观设置未保存，请重试。")
+        }
+    }
+
     func updateWindowSettings(panelWidth: Double, height: Double, top: Double) {
         let previous = settings
         settings.panelWidth = min(max(panelWidth, 280), 640)

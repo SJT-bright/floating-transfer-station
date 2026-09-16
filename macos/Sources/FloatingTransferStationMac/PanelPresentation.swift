@@ -88,6 +88,7 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
 
 final class PanelPresentation: ObservableObject {
     @Published private(set) var isExpanded = false
+    var isEditingAppearance = false
 
     var onHoverChanged: ((Bool) -> Void)?
     var onVerticalDragChanged: ((Double) -> Void)?
