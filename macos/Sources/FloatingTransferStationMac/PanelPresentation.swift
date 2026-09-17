@@ -129,18 +129,18 @@ struct PanelInteractionPolicy {
 }
 
 struct PanelGeometry {
-    static let railWidth = 82.0
-    static let collapsedSize = NSSize(width: 56, height: 164)
+    static let railWidth = 70.0
+    static let collapsedSize = NSSize(width: 48, height: 140)
 
     static func expandedFrame(
         settings: WindowSettings,
         in visibleFrame: NSRect
     ) -> NSRect {
-        let maximumWidth = max(0, min(480, visibleFrame.width))
-        let minimumWidth = min(380, maximumWidth)
+        let maximumWidth = max(0, min(408, visibleFrame.width))
+        let minimumWidth = min(340, maximumWidth)
         let width = min(max(settings.panelWidth + railWidth, minimumWidth), maximumWidth)
-        let maximumHeight = max(0, min(560, visibleFrame.height))
-        let minimumHeight = min(440, maximumHeight)
+        let maximumHeight = max(0, min(476, visibleFrame.height))
+        let minimumHeight = min(400, maximumHeight)
         let height = min(max(settings.windowHeight, minimumHeight), maximumHeight)
         let top = min(max(settings.top, 0), max(0, visibleFrame.height - height))
         return expandedFrame(
@@ -155,8 +155,8 @@ struct PanelGeometry {
         top: Double,
         in visibleFrame: NSRect
     ) -> NSRect {
-        let width = min(max(size.width, min(380, visibleFrame.width)), min(480, visibleFrame.width))
-        let height = min(max(size.height, min(440, visibleFrame.height)), min(560, visibleFrame.height))
+        let width = min(max(size.width, min(340, visibleFrame.width)), min(408, visibleFrame.width))
+        let height = min(max(size.height, min(400, visibleFrame.height)), min(476, visibleFrame.height))
         let clampedTop = min(max(top, 0), max(0, visibleFrame.height - height))
         return NSRect(
             x: visibleFrame.maxX - width,

@@ -344,7 +344,7 @@ enum MacCoreTests {
         let expanded = PanelGeometry.expandedFrame(settings: .default, in: screen)
         let collapsed = PanelGeometry.collapsedFrame(around: expanded, in: screen)
 
-        try check(collapsed.size == NSSize(width: 56, height: 164), "collapsed handle size changed")
+        try check(collapsed.size == NSSize(width: 48, height: 140), "collapsed handle size changed")
         try check(collapsed.maxX == screen.maxX, "collapsed handle left the right screen edge")
         try check(collapsed.midY == expanded.midY, "collapsed handle moved away from the panel center")
     }
@@ -354,15 +354,15 @@ enum MacCoreTests {
         let oversized = WindowSettings(panelWidth: 900, windowHeight: 900, top: -20)
         let frame = PanelGeometry.expandedFrame(settings: oversized, in: screen)
 
-        try check(frame.width == 480, "expanded panel exceeded compact width")
-        try check(frame.height == 560, "expanded panel exceeded compact height")
+        try check(frame.width == 408, "expanded panel exceeded compact width")
+        try check(frame.height == 476, "expanded panel exceeded compact height")
         try check(frame.maxX == screen.maxX, "expanded panel left the right screen edge")
         try check(frame.maxY == screen.maxY, "expanded panel top was not clamped")
     }
 
     private static func testVerticalRailDragStaysAttachedToRightEdge() throws {
         let screen = NSRect(x: 0, y: 24, width: 1512, height: 958)
-        let size = NSSize(width: 442, height: 560)
+        let size = NSSize(width: 408, height: 476)
         let dragged = PanelGeometry.verticallyDraggedExpandedFrame(
             size: size,
             startTop: 80,

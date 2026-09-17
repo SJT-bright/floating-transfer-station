@@ -117,9 +117,9 @@ struct ContentView: View {
     }
 
     private var collapsedHandle: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             Image(systemName: "tray.full.fill")
-                .font(.system(size: 21, weight: .semibold))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
 
             Text("\(model.items.count)")
@@ -149,7 +149,7 @@ struct ContentView: View {
     }
 
     private var toolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.displayName(for: model.activeCategory))
                     .font(.headline)
@@ -203,8 +203,8 @@ struct ContentView: View {
             .disabled(model.orderedItems(in: model.activeCategory).isEmpty)
         }
         .buttonStyle(.borderless)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background(
             LinearGradient(
                 colors: [
@@ -245,7 +245,7 @@ struct ContentView: View {
             .padding(28)
         } else {
             ScrollView {
-                LazyVStack(spacing: 10) {
+                LazyVStack(spacing: 8) {
                     ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                         if index > 0,
                            visibleItems[index - 1].isPinned,
@@ -264,7 +264,7 @@ struct ContentView: View {
                         ItemCard(model: model, item: item)
                     }
                 }
-                .padding(12)
+                .padding(9)
             }
         }
     }
@@ -321,7 +321,7 @@ struct ContentView: View {
             .accessibilityLabel("上下拖动悬浮中转站")
         }
         .padding(8)
-        .frame(width: 82)
+        .frame(width: PanelGeometry.railWidth)
         .help("按住最右侧栏上下拖动")
         .contentShape(Rectangle())
         .highPriorityGesture(panelVerticalDragGesture(minimumDistance: 8))
@@ -353,7 +353,7 @@ struct ContentView: View {
                             .foregroundStyle(textColor.opacity(0.75))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 7)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -554,7 +554,7 @@ private struct ItemCard: View {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 220)
+                    .frame(maxWidth: .infinity, maxHeight: 180)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
                     .onDrag {
@@ -573,7 +573,7 @@ private struct ItemCard: View {
                     .foregroundStyle(textColor.opacity(0.75))
             }
         }
-        .padding(11)
+        .padding(9)
         .foregroundStyle(textColor)
         .background(
             RoundedRectangle(cornerRadius: 12)

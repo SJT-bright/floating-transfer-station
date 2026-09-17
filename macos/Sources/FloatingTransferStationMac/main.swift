@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var launchAtLoginMenuItem: NSMenuItem?
     private var collapseWorkItem: DispatchWorkItem?
     private let collapseMotion = PanelCollapseMotion()
-    private var expandedSize = NSSize(width: 442, height: 560)
+    private var expandedSize = NSSize(width: 408, height: 476)
     private var expandedTop = 80.0
     private var verticalDragStartTop: Double?
     private var verticalDragStartMouseY: Double?
@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = PanelGeometry.collapsedSize
-        panel.maxSize = NSSize(width: min(480, visibleFrame.width), height: min(560, visibleFrame.height))
+        panel.maxSize = NSSize(width: min(408, visibleFrame.width), height: min(476, visibleFrame.height))
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -277,13 +277,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? expandedFrame
             : PanelGeometry.collapsedFrame(around: expandedFrame, in: visibleFrame)
 
-        // Never lay out a full board at the 56-point handle width, nor animate
+        // Never lay out a full board at the 48-point handle width, nor animate
         // through intermediate widths (long text reflows on every frame).
         if !expanded {
             presentation.setExpanded(false)
         }
         panel.minSize = expanded
-            ? NSSize(width: min(380, visibleFrame.width), height: min(440, visibleFrame.height))
+            ? NSSize(width: min(340, visibleFrame.width), height: min(400, visibleFrame.height))
             : PanelGeometry.collapsedSize
         if expanded {
             panel.styleMask.insert(.resizable)
