@@ -30,7 +30,17 @@ enum MacCoreTests {
         try testCollapseRunsOnHostedLayerAndFinishes()
         try testAppearancePersistsWithoutChangingCategories()
         try testNamesSearchAndPersistence()
-        print("macOS core tests passed (20 tests)")
+        try testExpandedTextFitsActualLines()
+        print("macOS core tests passed (21 tests)")
+    }
+
+    private static func testExpandedTextFitsActualLines() throws {
+        let threeLines = TextCardLayout.expandedHeight(text: "第一行\n第二行\n第三行", width: 280)
+        try check(threeLines > 32 && threeLines < 65, "three lines still reserve a large blank area")
+        try check(TextCardLayout.expandedHeight(text: "短文字", width: 280) == 32, "short text grew unnecessarily")
+        let wrapping = String(repeating: "中文自动换行", count: 8)
+        try check(TextCardLayout.expandedHeight(text: wrapping, width: 140) > TextCardLayout.expandedHeight(text: wrapping, width: 300), "height ignores actual wrapping width")
+        try check(TextCardLayout.expandedHeight(text: String(repeating: "长文\n", count: 1000), width: 280) == 180, "long text exceeds scrolling height limit")
     }
 
     private static func testNamesSearchAndPersistence() throws {

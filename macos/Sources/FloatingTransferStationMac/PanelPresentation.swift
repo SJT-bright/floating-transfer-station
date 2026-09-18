@@ -128,6 +128,19 @@ struct PanelInteractionPolicy {
     }
 }
 
+enum TextCardLayout {
+    static func expandedHeight(text: String, width: CGFloat) -> CGFloat {
+        let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(layout)
+        layout.addTextContainer(container)
+        layout.ensureLayout(forBoundingRect: NSRect(x: 0, y: 0, width: max(1, width), height: 180), in: container)
+        return min(180, max(32, ceil(layout.usedRect(for: container).height)))
+    }
+}
+
 struct PanelGeometry {
     static let railWidth = 70.0
     static let collapsedSize = NSSize(width: 48, height: 140)

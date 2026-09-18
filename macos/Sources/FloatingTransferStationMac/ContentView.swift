@@ -575,8 +575,8 @@ private struct ItemCard: View {
             }
 
             if item.kind == .text {
-                FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor))
-                    .frame(height: isTextExpanded ? 180 : 32)
+                FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor), expanded: isTextExpanded)
+                    .frame(maxWidth: .infinity)
                     .clipped()
                     .help("在文字框内滚动查看完整内容；拖动左上角“文字”可拖出全文")
                 Button {
@@ -678,12 +678,19 @@ private struct FullTextReader: NSViewRepresentable {
     let text: String
     var compact = false
     var color: NSColor = .labelColor
+    var expanded = false
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        guard compact, let width = proposal.width else { return nil }
+        return CGSize(width: width, height: expanded ? TextCardLayout.expandedHeight(text: text, width: width) : 32)
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
+        if compact { scrollView.scrollerStyle = .overlay }
         let textView = NSTextView(frame: .zero)
         textView.isEditable = false
         textView.isSelectable = true
