@@ -58,6 +58,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
     var text: String?
     var imageRelativePath: String?
     var isPinned: Bool
+    var name: String?
 
     // Bound list-layout work without modifying the stored/dragged text.
     var textPreview: String { String((text ?? "").prefix(600)) }
@@ -70,7 +71,8 @@ struct BoardItem: Codable, Identifiable, Equatable {
         createdAt: Date = Date(),
         text: String? = nil,
         imageRelativePath: String? = nil,
-        isPinned: Bool = false
+        isPinned: Bool = false,
+        name: String? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -80,6 +82,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         self.text = text
         self.imageRelativePath = imageRelativePath
         self.isPinned = isPinned
+        self.name = name
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -91,6 +94,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         case text
         case imageRelativePath
         case isPinned
+        case name
     }
 
     init(from decoder: Decoder) throws {
@@ -103,6 +107,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         text = try container.decodeIfPresent(String.self, forKey: .text)
         imageRelativePath = try container.decodeIfPresent(String.self, forKey: .imageRelativePath)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        name = try container.decodeIfPresent(String.self, forKey: .name)
     }
 }
 

@@ -15,6 +15,11 @@ struct ContentView: View {
     @State private var isAddingCategory = false
     @State private var newCategoryName = ""
     @State private var showsAppearance = false
+    @State private var searchQuery = ""
+
+    private var isSearching: Bool {
+        !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     private var appearance: PanelAppearance {
         model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
@@ -71,6 +76,24 @@ struct ContentView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 toolbar
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                    TextField("搜索名称（全部分类）", text: $searchQuery)
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("搜索名称")
+                    if !searchQuery.isEmpty {
+                        Button { searchQuery = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("清除搜索")
+                    }
+                }
+                .font(.system(size: 12))
+                .padding(8)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
                 Divider()
                 board
                 statusBar
@@ -151,10 +174,10 @@ struct ContentView: View {
     private var toolbar: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(model.displayName(for: model.activeCategory))
+                Text(isSearching ? "搜索结果" : model.displayName(for: model.activeCategory))
                     .font(.headline)
                     .lineLimit(1)
-                Text("\(model.orderedItems(in: model.activeCategory).count) 条内容")
+                Text("\(isSearching ? model.searchNamedItems(searchQuery).count : model.orderedItems(in: model.activeCategory).count) 条内容")
                     .font(.caption)
                     .foregroundStyle(textColor.opacity(0.75))
             }
@@ -193,6 +216,7 @@ struct ContentView: View {
                 Image(systemName: "pencil")
             }
             .help("重命名当前分类")
+            .disabled(isSearching)
 
             Button(role: .destructive) {
                 confirmsClear = true
@@ -200,7 +224,7 @@ struct ContentView: View {
                 Image(systemName: "trash")
             }
             .help("清空当前分类")
-            .disabled(model.orderedItems(in: model.activeCategory).isEmpty)
+            .disabled(isSearching || model.orderedItems(in: model.activeCategory).isEmpty)
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 10)
@@ -219,7 +243,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var board: some View {
-        let visibleItems = model.orderedItems(in: model.activeCategory)
+        let visibleItems = isSearching ? model.searchNamedItems(searchQuery) : model.orderedItems(in: model.activeCategory)
         if visibleItems.isEmpty {
             VStack(spacing: 14) {
                 Image(systemName: "square.and.arrow.down")
@@ -234,10 +258,10 @@ struct ContentView: View {
                         Circle()
                             .stroke(Color.white.opacity(colorScheme == .dark ? 0.12 : 0.5))
                     )
-                Text("复制文字或图片，它会自动出现在这里")
+                Text(isSearching ? "没有匹配的名称" : "复制文字或图片，它会自动出现在这里")
                     .font(.callout)
                     .multilineTextAlignment(.center)
-                Text("也可以把图片或文字直接拖进窗口")
+                Text(isSearching ? "只搜索你填写的名称，未命名内容不参与搜索" : "也可以把图片或文字直接拖进窗口")
                     .font(.caption)
                     .foregroundStyle(textColor.opacity(0.75))
             }
@@ -261,7 +285,7 @@ struct ContentView: View {
                             .foregroundStyle(.quaternary)
                             .padding(.horizontal, 4)
                         }
-                        ItemCard(model: model, item: item)
+                        ItemCard(model: model, item: item, showsCategory: isSearching)
                     }
                 }
                 .padding(9)
@@ -463,7 +487,11 @@ private struct AppearanceEditor: View {
 private struct ItemCard: View {
     @ObservedObject var model: BoardModel
     let item: BoardItem
+    var showsCategory = false
     @State private var showsFullText = false
+    @State private var isTextExpanded = false
+    @State private var nameDraft = ""
+    @FocusState private var isEditingName: Bool
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -484,6 +512,8 @@ private struct ItemCard: View {
                 )
                 .font(.caption)
                 .foregroundStyle(textColor.opacity(0.75))
+                .onDrag { model.dragProvider(for: item) }
+                .help("拖动原始内容到其他应用")
 
                 Spacer()
 
@@ -523,15 +553,39 @@ private struct ItemCard: View {
             }
             .buttonStyle(.borderless)
 
+            TextField("命名后可搜索", text: $nameDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                .accessibilityLabel("内容名称")
+                .focused($isEditingName)
+                .onAppear { nameDraft = item.name ?? "" }
+                .onSubmit { saveName() }
+                .onChange(of: isEditingName) { focused in
+                    if !focused { saveName() }
+                }
+                .onDisappear { saveName() }
+
+            if showsCategory {
+                Text(model.displayName(for: item.category))
+                    .font(.caption2)
+                    .foregroundStyle(textColor.opacity(0.75))
+            }
+
             if item.kind == .text {
-                Text(item.textPreview)
-                    .font(.system(size: 13))
-                    .lineLimit(12)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onDrag {
-                        model.dragProvider(for: item)
-                    }
+                FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor))
+                    .frame(height: isTextExpanded ? 180 : 32)
+                    .clipped()
+                    .help("在文字框内滚动查看完整内容；拖动左上角“文字”可拖出全文")
+                Button {
+                    isTextExpanded.toggle()
+                } label: {
+                    Label(isTextExpanded ? "收起为两行" : "展开文字", systemImage: isTextExpanded ? "chevron.up" : "chevron.down")
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
                 Button("查看全文") { showsFullText = true }
                     .font(.caption)
                     .buttonStyle(.borderless)
@@ -614,10 +668,16 @@ private struct ItemCard: View {
             }
         }
     }
+
+    private func saveName() {
+        model.renameItem(item.id, to: nameDraft)
+    }
 }
 
 private struct FullTextReader: NSViewRepresentable {
     let text: String
+    var compact = false
+    var color: NSColor = .labelColor
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -628,9 +688,10 @@ private struct FullTextReader: NSViewRepresentable {
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.font = .systemFont(ofSize: 14)
-        textView.textColor = .labelColor
-        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.font = .systemFont(ofSize: compact ? 13 : 14)
+        textView.textColor = color
+        textView.textContainerInset = compact ? .zero : NSSize(width: 8, height: 8)
+        if compact { textView.textContainer?.lineFragmentPadding = 0 }
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
@@ -643,9 +704,9 @@ private struct FullTextReader: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView,
-              textView.string != text else { return }
-        textView.string = text
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        textView.textColor = color
+        if textView.string != text { textView.string = text }
     }
 }
 

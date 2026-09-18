@@ -29,7 +29,31 @@ enum MacCoreTests {
         try testCollapseCancellationRejectsStaleCompletion()
         try testCollapseRunsOnHostedLayerAndFinishes()
         try testAppearancePersistsWithoutChangingCategories()
-        print("macOS core tests passed (19 tests)")
+        try testNamesSearchAndPersistence()
+        print("macOS core tests passed (20 tests)")
+    }
+
+    private static func testNamesSearchAndPersistence() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        model.addText("正文关键词", to: .inbox)
+        let id = try require(model.items.first?.id, "missing item")
+        try check(model.items.first?.name == nil && model.searchNamedItems("正文关键词").isEmpty, "unnamed body matched search")
+        model.renameItem(id, to: "  人物 Hero  ")
+        try check(model.searchNamedItems("hero").map(\.id) == [id], "named item did not match")
+        try check(model.searchNamedItems("正文关键词").isEmpty && model.searchNamedItems("  ").isEmpty, "search used body or empty query")
+        model.move(id, to: .prompt)
+        try check(model.searchNamedItems("人物").map(\.id) == [id], "cross-category search failed")
+        let reloaded = BoardModel(store: store, monitorsClipboard: false)
+        try check(reloaded.items.first?.name == "人物 Hero" && reloaded.items.first?.text == "正文关键词", "name save altered text")
+        reloaded.renameItem(id, to: "  ")
+        try check(reloaded.searchNamedItems("Hero").isEmpty && store.loadBoard().first?.name == nil, "clearing name left searchable item")
+        let legacy = BoardItem(kind: .text, category: .inbox, order: 0, text: "旧数据")
+        let data = try JSONEncoder().encode(legacy)
+        let decoded = try JSONDecoder().decode(BoardItem.self, from: data)
+        try check(decoded.name == nil && decoded.text == "旧数据", "legacy item lost")
     }
 
     private static func testAppearancePersistsWithoutChangingCategories() throws {

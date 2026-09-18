@@ -47,6 +47,25 @@ final class BoardModel: ObservableObject {
         activeCategory = category
     }
 
+    func searchNamedItems(_ query: String) -> [BoardItem] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        return items.filter {
+            guard let name = $0.name, !name.isEmpty else { return false }
+            return name.localizedStandardContains(query)
+        }.sorted(by: Self.displayOrder)
+    }
+
+    func renameItem(_ id: UUID, to rawName: String) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name: String? = trimmed.isEmpty ? nil : trimmed
+        guard items[index].name != name else { return }
+        _ = persistMutation(failureMessage: "名称未保存，请重试。") {
+            items[index].name = name
+        }
+    }
+
     var categories: [BoardCategory] {
         var seen = Set<BoardCategory>()
         return (BoardCategory.visibleCases + settings.customCategories + items.map(\.category))
@@ -228,7 +247,8 @@ final class BoardModel: ObservableObject {
             kind: .image,
             category: targetCategory,
             order: 0,
-            imageRelativePath: copiedRelativePath
+            imageRelativePath: copiedRelativePath,
+            name: source.name
         )
         guard persistMutation(failureMessage: "图片复制未保存，请重试。", {
             insertAtTopOfNormalRegion([copiedItem], in: targetCategory)
