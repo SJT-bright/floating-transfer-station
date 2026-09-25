@@ -31,7 +31,30 @@ enum MacCoreTests {
         try testAppearancePersistsWithoutChangingCategories()
         try testNamesSearchAndPersistence()
         try testExpandedTextFitsActualLines()
-        print("macOS core tests passed (21 tests)")
+        try testFreePositionAndBothEdgeSnapping()
+        print("macOS core tests passed (22 tests)")
+    }
+
+    private static func testFreePositionAndBothEdgeSnapping() throws {
+        let screen = NSRect(x: -1200, y: 40, width: 1200, height: 800)
+        let free = NSRect(x: -800, y: 200, width: 408, height: 476)
+        try check(PanelGeometry.positionedFrame(free, in: screen) == free, "free drag still forces edge docking")
+        try check(!PanelGeometry.isDocked(free, in: screen), "floating window auto-collapses")
+        let left = PanelGeometry.positionedFrame(NSRect(x: -1185, y: 200, width: 408, height: 476), in: screen)
+        let right = PanelGeometry.positionedFrame(NSRect(x: -423, y: 200, width: 408, height: 476), in: screen)
+        try check(left.minX == screen.minX && right.maxX == screen.maxX, "near-edge snap failed")
+        try check(PanelGeometry.collapsedFrame(around: left, in: screen).minX == screen.minX, "left handle appears on right")
+        try check(PanelGeometry.collapsedFrame(around: right, in: screen).maxX == screen.maxX, "right handle escaped edge")
+        let beyond = PanelGeometry.positionedFrame(NSRect(x: -5000, y: 5000, width: 408, height: 476), in: screen)
+        try check(screen.contains(beyond), "dragged window escaped usable screen")
+        let outsideSnap = NSRect(x: screen.minX + 21, y: 200, width: 408, height: 476)
+        try check(PanelGeometry.positionedFrame(outsideSnap, in: screen) == outsideSnap, "snap threshold prevents detaching")
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        model.updateWindowSettings(panelWidth: 338, height: 476, top: 164, origin: free.origin)
+        try check(PanelGeometry.expandedFrame(settings: store.loadSettings(), in: screen) == free, "free position lost on reload")
     }
 
     private static func testExpandedTextFitsActualLines() throws {

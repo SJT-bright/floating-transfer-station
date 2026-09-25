@@ -5,7 +5,7 @@ import QuartzCore
 enum PanelRevealMotion {
     static let animationKey = "panelReveal"
 
-    static func animation(reduceMotion: Bool) -> CAAnimationGroup {
+    static func animation(reduceMotion: Bool, towardLeft: Bool = false) -> CAAnimationGroup {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
         fade.toValue = 1
@@ -16,7 +16,7 @@ enum PanelRevealMotion {
             group.animations = [fade]
         } else {
             let slide = CABasicAnimation(keyPath: "transform.translation.x")
-            slide.fromValue = 28
+            slide.fromValue = towardLeft ? -28 : 28
             slide.toValue = 0
             slide.duration = group.duration
             group.animations = [fade, slide]
@@ -35,7 +35,7 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
 
     var isRunning: Bool { token != nil }
 
-    static func animation(reduceMotion: Bool) -> CAAnimationGroup {
+    static func animation(reduceMotion: Bool, towardLeft: Bool = false) -> CAAnimationGroup {
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 1
         fade.toValue = 0
@@ -47,7 +47,7 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
         } else {
             let slide = CABasicAnimation(keyPath: "transform.translation.x")
             slide.fromValue = 0
-            slide.toValue = 28
+            slide.toValue = towardLeft ? -28 : 28
             slide.duration = group.duration
             group.animations = [fade, slide]
         }
@@ -57,13 +57,13 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
         return group
     }
 
-    func start(on layer: CALayer, reduceMotion: Bool, completion: @escaping () -> Void) {
+    func start(on layer: CALayer, reduceMotion: Bool, towardLeft: Bool = false, completion: @escaping () -> Void) {
         cancel()
         let token = UUID().uuidString
         self.layer = layer
         self.token = token
         self.completion = completion
-        let animation = Self.animation(reduceMotion: reduceMotion)
+        let animation = Self.animation(reduceMotion: reduceMotion, towardLeft: towardLeft)
         animation.setValue(token, forKey: Self.tokenKey)
         animation.delegate = self
         layer.add(animation, forKey: Self.animationKey)
@@ -88,10 +88,11 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
 
 final class PanelPresentation: ObservableObject {
     @Published private(set) var isExpanded = false
+    @Published var isDockedLeft = false
     var isEditingAppearance = false
 
     var onHoverChanged: ((Bool) -> Void)?
-    var onVerticalDragChanged: ((Double) -> Void)?
+    var onVerticalDragChanged: ((NSPoint) -> Void)?
     var onVerticalDragEnded: (() -> Void)?
 
     func handleHover(_ isInside: Bool) {
@@ -102,8 +103,8 @@ final class PanelPresentation: ObservableObject {
         isExpanded = expanded
     }
 
-    func handleVerticalDragChanged(gestureStartMouseY: Double) {
-        onVerticalDragChanged?(gestureStartMouseY)
+    func handleVerticalDragChanged(gestureStartMouse: NSPoint) {
+        onVerticalDragChanged?(gestureStartMouse)
     }
 
     func handleVerticalDragEnded() {
@@ -142,6 +143,22 @@ enum TextCardLayout {
 }
 
 struct PanelGeometry {
+    static func positionedFrame(_ frame: NSRect, in screen: NSRect, snap: Bool = true) -> NSRect {
+        var result = frame
+        result.size.width = min(frame.width, screen.width)
+        result.size.height = min(frame.height, screen.height)
+        result.origin.x = min(max(frame.minX, screen.minX), screen.maxX - result.width)
+        result.origin.y = min(max(frame.minY, screen.minY), screen.maxY - result.height)
+        if snap {
+            if result.minX - screen.minX <= 20 { result.origin.x = screen.minX }
+            else if screen.maxX - result.maxX <= 20 { result.origin.x = screen.maxX - result.width }
+        }
+        return result
+    }
+
+    static func isDocked(_ frame: NSRect, in screen: NSRect) -> Bool {
+        abs(frame.minX - screen.minX) < 1 || abs(frame.maxX - screen.maxX) < 1
+    }
     static let railWidth = 70.0
     static let collapsedSize = NSSize(width: 48, height: 140)
 
@@ -156,11 +173,15 @@ struct PanelGeometry {
         let minimumHeight = min(400, maximumHeight)
         let height = min(max(settings.windowHeight, minimumHeight), maximumHeight)
         let top = min(max(settings.top, 0), max(0, visibleFrame.height - height))
-        return expandedFrame(
+        var frame = expandedFrame(
             size: NSSize(width: width, height: height),
             top: top,
             in: visibleFrame
         )
+        if let x = settings.windowX, let y = settings.windowY, x.isFinite, y.isFinite {
+            frame.origin = NSPoint(x: x, y: y)
+        }
+        return positionedFrame(frame, in: visibleFrame)
     }
 
     static func expandedFrame(
@@ -201,7 +222,7 @@ struct PanelGeometry {
         let preferredY = expandedFrame.midY - (height / 2)
         let y = min(max(preferredY, visibleFrame.minY), visibleFrame.maxY - height)
         return NSRect(
-            x: visibleFrame.maxX - width,
+            x: abs(expandedFrame.minX - visibleFrame.minX) < 1 ? visibleFrame.minX : expandedFrame.maxX - width,
             y: y,
             width: width,
             height: height

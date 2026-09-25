@@ -60,11 +60,12 @@ struct ContentView: View {
     ) -> some Gesture {
         DragGesture(minimumDistance: minimumDistance, coordinateSpace: .global)
             .onChanged { value in
-                let gestureStartMouseY = Double(
-                    NSEvent.mouseLocation.y + value.translation.height
+                let gestureStartMouse = NSPoint(
+                    x: NSEvent.mouseLocation.x - value.translation.width,
+                    y: NSEvent.mouseLocation.y + value.translation.height
                 )
                 presentation.handleVerticalDragChanged(
-                    gestureStartMouseY: gestureStartMouseY
+                    gestureStartMouse: gestureStartMouse
                 )
             }
             .onEnded { _ in
@@ -153,7 +154,7 @@ struct ContentView: View {
                 .fill(Color.primary.opacity(0.14))
                 .frame(width: 24, height: 1)
 
-            Image(systemName: "chevron.left.2")
+            Image(systemName: presentation.isDockedLeft ? "chevron.right.2" : "chevron.left.2")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(textColor.opacity(0.75))
 
@@ -332,7 +333,7 @@ struct ContentView: View {
                 Capsule()
                     .fill(Color.secondary.opacity(0.45))
                     .frame(width: 24, height: 3)
-                Image(systemName: "arrow.up.and.down")
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 10, weight: .semibold))
                 Text("按住拖动")
                     .font(.system(size: 9, weight: .medium))
@@ -342,11 +343,11 @@ struct ContentView: View {
             .padding(.vertical, 8)
             .contentShape(Rectangle())
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("上下拖动悬浮中转站")
+            .accessibilityLabel("自由拖动悬浮中转站")
         }
         .padding(8)
         .frame(width: PanelGeometry.railWidth)
-        .help("按住最右侧栏上下拖动")
+        .help("按住竖栏自由拖动，靠近屏幕左右边缘自动吸附")
         .contentShape(Rectangle())
         .highPriorityGesture(panelVerticalDragGesture(minimumDistance: 8))
     }

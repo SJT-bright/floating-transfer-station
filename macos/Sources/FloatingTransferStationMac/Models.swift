@@ -167,6 +167,8 @@ struct PanelAppearance: Codable, Equatable {
 }
 
 struct WindowSettings: Codable, Equatable {
+    var windowX: Double?
+    var windowY: Double?
     var appearance: PanelAppearance?
     var panelWidth: Double
     var windowHeight: Double
@@ -206,6 +208,8 @@ struct WindowSettings: Codable, Equatable {
         case categoryNames
         case customCategories
         case appearance
+        case windowX
+        case windowY
     }
 
     init(from decoder: Decoder) throws {
@@ -219,5 +223,7 @@ struct WindowSettings: Codable, Equatable {
         ) ?? [:]
         customCategories = try container.decodeIfPresent([BoardCategory].self, forKey: .customCategories) ?? []
         appearance = try container.decodeIfPresent(PanelAppearance.self, forKey: .appearance)?.normalized
+        windowX = try container.decodeIfPresent(Double.self, forKey: .windowX)
+        windowY = try container.decodeIfPresent(Double.self, forKey: .windowY)
     }
 }

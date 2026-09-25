@@ -11,9 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let collapseMotion = PanelCollapseMotion()
     private var expandedSize = NSSize(width: 408, height: 476)
     private var expandedTop = 80.0
-    private var verticalDragStartTop: Double?
-    private var verticalDragStartMouseY: Double?
-    private var verticalDragVisibleFrame: NSRect?
+    private var dragStartFrame: NSRect?
+    private var dragStartMouse: NSPoint?
+    private var expandedOrigin = NSPoint.zero
     private var isProgrammaticTransition = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -23,14 +23,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let model = BoardModel()
         self.model = model
         let settings = model.settings
-        let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let savedPoint = NSPoint(x: settings.windowX ?? .greatestFiniteMagnitude, y: settings.windowY ?? .greatestFiniteMagnitude)
+        let visibleFrame = NSScreen.screens.first(where: { $0.visibleFrame.contains(savedPoint) })?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let expandedFrame = PanelGeometry.expandedFrame(settings: settings, in: visibleFrame)
+        expandedOrigin = expandedFrame.origin
         expandedSize = expandedFrame.size
         expandedTop = visibleFrame.maxY - expandedFrame.maxY
-        let collapsedFrame = PanelGeometry.collapsedFrame(
+        let docked = PanelGeometry.isDocked(expandedFrame, in: visibleFrame)
+        presentation.isDockedLeft = abs(expandedFrame.minX - visibleFrame.minX) < 1
+        presentation.setExpanded(!docked)
+        let collapsedFrame = docked ? PanelGeometry.collapsedFrame(
             around: expandedFrame,
             in: visibleFrame
-        )
+        ) : expandedFrame
 
         let panel = NSPanel(
             contentRect: collapsedFrame,
@@ -52,6 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = PanelGeometry.collapsedSize
         panel.maxSize = NSSize(width: min(408, visibleFrame.width), height: min(476, visibleFrame.height))
+        if !docked {
+            panel.styleMask.insert(.resizable)
+            panel.minSize = NSSize(width: min(340, visibleFrame.width), height: min(400, visibleFrame.height))
+        }
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
@@ -69,8 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         presentation.onHoverChanged = { [weak self] isInside in
             self?.handleHover(isInside)
         }
-        presentation.onVerticalDragChanged = { [weak self] gestureStartMouseY in
-            self?.handleVerticalDragChanged(gestureStartMouseY: gestureStartMouseY)
+        presentation.onVerticalDragChanged = { [weak self] gestureStartMouse in
+            self?.handleVerticalDragChanged(gestureStartMouse: gestureStartMouse)
         }
         presentation.onVerticalDragEnded = { [weak self] in
             self?.handleVerticalDragEnded()
@@ -103,12 +112,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
+        expandedOrigin = panel.frame.origin
         expandedSize = panel.frame.size
         expandedTop = visibleFrame.maxY - panel.frame.maxY
         model.updateWindowSettings(
             panelWidth: panel.frame.width - PanelGeometry.railWidth,
             height: panel.frame.height,
-            top: expandedTop
+            top: expandedTop,
+            origin: expandedOrigin
         )
     }
 
@@ -126,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func scheduleCollapse(after delay: TimeInterval) {
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self, !self.presentation.isEditingAppearance else {
+            guard let self, self.isDocked, !self.presentation.isEditingAppearance else {
                 return
             }
 
@@ -144,68 +155,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
-    private func handleVerticalDragChanged(gestureStartMouseY: Double) {
-        guard let panel else {
-            return
-        }
-
+    private func handleVerticalDragChanged(gestureStartMouse: NSPoint) {
+        guard let panel else { return }
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
         collapseMotion.cancel()
-        if verticalDragStartTop == nil {
+        if dragStartFrame == nil {
+            if !presentation.isExpanded { applyExpanded(true) }
             panel.contentView?.layer?.removeAnimation(forKey: PanelRevealMotion.animationKey)
-            guard let visibleFrame = panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else {
-                return
-            }
-            verticalDragStartTop = expandedTop
-            verticalDragStartMouseY = gestureStartMouseY
-            verticalDragVisibleFrame = visibleFrame
+            dragStartFrame = panel.frame
+            dragStartMouse = gestureStartMouse
             isProgrammaticTransition = true
         }
-
-        guard let verticalDragStartTop,
-              let verticalDragStartMouseY,
-              let visibleFrame = verticalDragVisibleFrame
-        else {
-            return
-        }
-        let translationY = verticalDragStartMouseY - Double(NSEvent.mouseLocation.y)
-        let expandedFrame = PanelGeometry.verticallyDraggedExpandedFrame(
-            size: expandedSize,
-            startTop: verticalDragStartTop,
-            translationY: translationY,
-            in: visibleFrame
-        )
-        expandedTop = visibleFrame.maxY - expandedFrame.maxY
-        let targetFrame = presentation.isExpanded
-            ? expandedFrame
-            : PanelGeometry.collapsedFrame(around: expandedFrame, in: visibleFrame)
-        panel.setFrame(targetFrame, display: true)
+        guard let start = dragStartFrame, let mouse = dragStartMouse,
+              let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
+                ?? panel.screen ?? NSScreen.main else { return }
+        let candidate = start.offsetBy(dx: NSEvent.mouseLocation.x - mouse.x,
+                                       dy: NSEvent.mouseLocation.y - mouse.y)
+        let frame = PanelGeometry.positionedFrame(candidate, in: screen.visibleFrame)
+        expandedOrigin = frame.origin
+        presentation.isDockedLeft = abs(frame.minX - screen.visibleFrame.minX) < 1
+        expandedSize = frame.size
+        expandedTop = screen.visibleFrame.maxY - frame.maxY
+        panel.setFrame(frame, display: true)
     }
 
     private func handleVerticalDragEnded() {
-        guard verticalDragStartTop != nil else {
-            return
-        }
-
-        verticalDragStartTop = nil
-        verticalDragStartMouseY = nil
-        verticalDragVisibleFrame = nil
+        guard dragStartFrame != nil else { return }
+        dragStartFrame = nil
+        dragStartMouse = nil
         isProgrammaticTransition = false
-        model?.updateWindowSettings(
-            panelWidth: expandedSize.width - PanelGeometry.railWidth,
-            height: expandedSize.height,
-            top: expandedTop
-        )
-
-        if let panel,
-           PanelInteractionPolicy.shouldScheduleCollapseAfterDrag(
-               isExpanded: presentation.isExpanded,
-               mouseLocation: NSEvent.mouseLocation,
-               panelFrame: panel.frame
-           ) {
+        saveWindowFrame()
+        if let panel, !panel.frame.contains(NSEvent.mouseLocation) {
             scheduleCollapse(after: 0.12)
         }
+    }
+
+    private var isDocked: Bool {
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return true }
+        return PanelGeometry.isDocked(NSRect(origin: expandedOrigin, size: expandedSize), in: screen.visibleFrame)
     }
 
     private func setExpanded(_ expanded: Bool) {
@@ -213,7 +201,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             collapseMotion.cancel()
         }
         guard presentation.isExpanded != expanded,
-              verticalDragStartTop == nil,
+              dragStartFrame == nil,
               let panel
         else {
             return
@@ -223,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             applyExpanded(true)
             return
         }
-        guard !collapseMotion.isRunning, !presentation.isEditingAppearance else {
+        guard isDocked, !collapseMotion.isRunning, !presentation.isEditingAppearance else {
             return
         }
         guard let layer = panel.contentView?.layer else {
@@ -233,12 +221,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         layer.removeAnimation(forKey: PanelRevealMotion.animationKey)
         collapseMotion.start(
             on: layer,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            towardLeft: presentation.isDockedLeft
         ) { [weak self] in
             guard let self, let panel = self.panel,
-                  !self.presentation.isEditingAppearance,
+                  !self.presentation.isEditingAppearance, self.isDocked,
                   !panel.frame.contains(NSEvent.mouseLocation),
-                  self.verticalDragStartTop == nil
+                  self.dragStartFrame == nil
             else {
                 return
             }
@@ -260,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        if presentation.isExpanded == expanded || verticalDragStartTop != nil {
+        if presentation.isExpanded == expanded || dragStartFrame != nil {
             return
         }
 
@@ -268,11 +257,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         defer { isProgrammaticTransition = false }
         panel.contentView?.layer?.removeAnimation(forKey: PanelRevealMotion.animationKey)
 
-        let expandedFrame = PanelGeometry.expandedFrame(
-            size: expandedSize,
-            top: expandedTop,
-            in: visibleFrame
+        let expandedFrame = PanelGeometry.positionedFrame(
+            NSRect(origin: expandedOrigin, size: expandedSize), in: visibleFrame
         )
+        expandedOrigin = expandedFrame.origin
+        expandedSize = expandedFrame.size
         let targetFrame = expanded
             ? expandedFrame
             : PanelGeometry.collapsedFrame(around: expandedFrame, in: visibleFrame)
@@ -300,7 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Animate only compositing, never the frame/bounds used by text layout.
             panel.contentView?.layer?.add(
                 PanelRevealMotion.animation(
-                    reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                    reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+                    towardLeft: presentation.isDockedLeft
                 ),
                 forKey: PanelRevealMotion.animationKey
             )

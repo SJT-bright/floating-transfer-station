@@ -411,11 +411,15 @@ final class BoardModel: ObservableObject {
         }
     }
 
-    func updateWindowSettings(panelWidth: Double, height: Double, top: Double) {
+    func updateWindowSettings(panelWidth: Double, height: Double, top: Double, origin: NSPoint? = nil) {
         let previous = settings
         settings.panelWidth = min(max(panelWidth, 280), 640)
         settings.windowHeight = max(height, 360)
         settings.top = max(top, 0)
+        if let origin {
+            settings.windowX = origin.x
+            settings.windowY = origin.y
+        }
         do {
             try store.saveSettings(settings)
         } catch {
