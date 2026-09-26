@@ -219,13 +219,20 @@ enum MacCoreTests {
         try check(settings.appearance == nil && settings.panelWidth == 420 && settings.customCategories.count == 1, "legacy settings were lost")
         try store.saveSettings(settings)
         let model = BoardModel(store: store, monitorsClipboard: false)
-        let appearance = PanelAppearance(textBrightness: 0.8, textOpacity: 0.7, backgroundBrightness: 0.1, backgroundOpacity: 0.6)
+        let oldAppearance = Data(#"{"textBrightness":0.8,"textOpacity":0.7,"backgroundBrightness":0.1,"backgroundOpacity":0.6}"#.utf8)
+        let migrated = try JSONDecoder().decode(PanelAppearance.self, from: oldAppearance)
+        try check(migrated.frostIntensity == 0 && migrated.glassIntensity == 0 && migrated.backgroundOpacity == 0.6,
+                  "legacy appearance changed during material migration")
+        let appearance = PanelAppearance(textBrightness: 0.8, textOpacity: 0.7, backgroundBrightness: 0.1, backgroundOpacity: 0.6,
+                                         frostIntensity: 0.45, glassIntensity: 0.75)
         model.updateAppearance(appearance)
         try check(store.loadSettings().appearance == appearance, "appearance did not persist")
         try check(store.loadSettings().categoryNames == settings.categoryNames && store.loadSettings().customCategories == settings.customCategories, "appearance changed categories")
         model.updateAppearance(nil)
         try check(store.loadSettings() == settings, "reset changed unrelated settings")
-        let invalid = PanelAppearance(textBrightness: -1, textOpacity: 0, backgroundBrightness: 5, backgroundOpacity: 2).normalized
+        let invalid = PanelAppearance(textBrightness: -1, textOpacity: 0, backgroundBrightness: 5, backgroundOpacity: 2,
+                                      frostIntensity: -1, glassIntensity: 2).normalized
+        try check(invalid.frostIntensity == 0 && invalid.glassIntensity == 1, "material values not bounded")
         try check(invalid.textBrightness == 0 && invalid.textOpacity == 0.2 && invalid.backgroundBrightness == 1 && invalid.backgroundOpacity == 1, "appearance values not bounded")
     }
 

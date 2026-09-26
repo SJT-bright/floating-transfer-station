@@ -2,6 +2,55 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct StationMaterial: NSViewRepresentable {
+    var frost: Double
+    var glass: Double
+
+    func makeNSView(context: Context) -> MaterialView { MaterialView() }
+
+    func updateNSView(_ view: MaterialView, context: Context) {
+        view.frost.alphaValue = frost
+        view.frost.isHidden = frost == 0
+        view.glass.alphaValue = glass
+        view.glass.isHidden = glass == 0
+    }
+
+    final class MaterialView: NSView {
+        let frost = NSVisualEffectView()
+        let glass: NSView
+
+        override init(frame frameRect: NSRect) {
+            if #available(macOS 26.0, *) {
+                let effect = NSGlassEffectView()
+                effect.style = .clear
+                effect.cornerRadius = 12
+                glass = effect
+            } else {
+                let effect = NSVisualEffectView()
+                effect.material = .hudWindow
+                effect.blendingMode = .behindWindow
+                effect.state = .active
+                glass = effect
+            }
+            super.init(frame: frameRect)
+            frost.material = .underWindowBackground
+            frost.blendingMode = .behindWindow
+            frost.state = .active
+            wantsLayer = true
+            layer?.cornerRadius = 12
+            layer?.masksToBounds = true
+            for effect in [frost, glass] {
+                effect.frame = bounds
+                effect.autoresizingMask = [.width, .height]
+                addSubview(effect)
+            }
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
 private struct StationHoverTracker: NSViewRepresentable {
     var onChange: (Bool) -> Void
 
@@ -116,12 +165,22 @@ struct ContentView: View {
         Color(white: appearance.textBrightness).opacity(appearance.textOpacity)
     }
 
-    private var translucentPanelBackground: Color {
-        if reduceTransparency {
-            return Color(nsColor: .windowBackgroundColor)
+    private var translucentPanelBackground: some View {
+        ZStack {
+            if reduceTransparency {
+                Color(nsColor: .windowBackgroundColor)
+            } else {
+                StationMaterial(frost: appearance.frostIntensity, glass: appearance.glassIntensity)
+                Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity)
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.75), .white.opacity(0.08),
+                                                         .white.opacity(0.35)],
+                                                 startPoint: .topLeading, endPoint: .bottomTrailing),
+                                  lineWidth: 1)
+                    .opacity(appearance.glassIntensity)
+            }
         }
-
-        return Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity)
+        .allowsHitTesting(false)
     }
 
     var body: some View {
@@ -612,6 +671,7 @@ struct ContentView: View {
 private struct AppearanceEditor: View {
     @ObservedObject var model: BoardModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var appearance: PanelAppearance {
         model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
@@ -647,6 +707,19 @@ private struct AppearanceEditor: View {
             Divider()
             control("背景深浅", key: \.backgroundBrightness, ends: "左侧黑色 · 右侧白色")
             control("背景不透明度", key: \.backgroundOpacity, ends: "左侧透明 · 右侧实色")
+            Divider()
+            Group {
+                control("磨砂强度", key: \.frostIntensity, ends: "关闭 · 背景磨砂混合增强")
+                control("液态玻璃强度", key: \.glassIntensity, ends: "关闭 · 玻璃透光与边缘高光增强")
+            }
+            .disabled(reduceTransparency)
+            if reduceTransparency {
+                Text("系统已开启降低透明度，材质效果暂不显示。")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("背景不透明度越低，材质越明显。macOS 26 使用原生液态玻璃，旧系统使用兼容材质。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Text("实时生效并自动保存，图片保持原样。").font(.caption).foregroundStyle(.secondary)
             Button("恢复系统默认") { model.updateAppearance(nil) }
                 .buttonStyle(.bordered)

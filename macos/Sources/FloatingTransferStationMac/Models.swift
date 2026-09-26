@@ -169,6 +169,8 @@ struct PanelAppearance: Codable, Equatable {
     var textOpacity: Double
     var backgroundBrightness: Double
     var backgroundOpacity: Double
+    var frostIntensity: Double = 0
+    var glassIntensity: Double = 0
 
     static func defaults(isDark: Bool) -> Self {
         Self(textBrightness: isDark ? 1 : 0, textOpacity: 0.95,
@@ -180,7 +182,20 @@ struct PanelAppearance: Codable, Equatable {
             value.isFinite ? min(1, max(minimum, value)) : 1
         }
         return Self(textBrightness: clamp(textBrightness), textOpacity: clamp(textOpacity, minimum: 0.2),
-                    backgroundBrightness: clamp(backgroundBrightness), backgroundOpacity: clamp(backgroundOpacity))
+                    backgroundBrightness: clamp(backgroundBrightness), backgroundOpacity: clamp(backgroundOpacity),
+                    frostIntensity: clamp(frostIntensity), glassIntensity: clamp(glassIntensity))
+    }
+}
+
+extension PanelAppearance {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        textBrightness = try values.decode(Double.self, forKey: .textBrightness)
+        textOpacity = try values.decode(Double.self, forKey: .textOpacity)
+        backgroundBrightness = try values.decode(Double.self, forKey: .backgroundBrightness)
+        backgroundOpacity = try values.decode(Double.self, forKey: .backgroundOpacity)
+        frostIntensity = try values.decodeIfPresent(Double.self, forKey: .frostIntensity) ?? 0
+        glassIntensity = try values.decodeIfPresent(Double.self, forKey: .glassIntensity) ?? 0
     }
 }
 
