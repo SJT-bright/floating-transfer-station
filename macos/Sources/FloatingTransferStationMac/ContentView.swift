@@ -2,6 +2,91 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct StationHoverTracker: NSViewRepresentable {
+    var onChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TrackingView { TrackingView() }
+
+    func updateNSView(_ view: TrackingView, context: Context) {
+        view.onChange = onChange
+    }
+
+    final class TrackingView: NSView {
+        var onChange: ((Bool) -> Void)?
+        private var hovering = false
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag],
+                owner: self, userInfo: nil))
+        }
+
+        override func mouseEntered(with event: NSEvent) { setHovered(true) }
+        override func mouseExited(with event: NSEvent) { setHovered(false) }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil { setHovered(false) }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        private func setHovered(_ value: Bool) {
+            guard hovering != value else { return }
+            hovering = value
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.hovering == value else { return }
+                self.onChange?(value)
+            }
+        }
+    }
+}
+
+private struct StationHoverEffect: ViewModifier {
+    var isPressed = false
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        let highlighted = isHovered && isEnabled
+        content
+            .background {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.accentColor.opacity(highlighted ? 0.22 : 0))
+                    .padding(-3)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color.white.opacity(highlighted ? 0.45 : 0), lineWidth: 0.8)
+                    .padding(-3)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: .black.opacity(highlighted ? 0.22 : 0), radius: highlighted ? 5 : 0, y: highlighted ? 3 : 0)
+            .scaleEffect(reduceMotion ? 1 : isPressed && isEnabled ? 0.97 : highlighted ? 1.045 : 1)
+            .offset(y: reduceMotion || isPressed ? 0 : highlighted ? -2 : 0)
+            .animation(reduceMotion ? .easeOut(duration: 0.12) : .interactiveSpring(response: 0.25, dampingFraction: 1), value: highlighted)
+            .animation(.easeOut(duration: 0.08), value: isPressed)
+            // Keep the hover target stationary while its visual surface lifts.
+            .background(StationHoverTracker { isHovered = $0 })
+            .contentShape(Rectangle())
+            .onDisappear { isHovered = false }
+    }
+}
+
+private struct StationButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .modifier(StationHoverEffect(isPressed: configuration.isPressed))
+            .opacity(isEnabled ? 1 : 0.4)
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var model: BoardModel
     @ObservedObject var presentation: PanelPresentation
@@ -83,6 +168,7 @@ struct ContentView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+                    .modifier(StationHoverEffect())
                     .disabled(model.isImportingFiles)
                     .padding(.horizontal, 10)
                     .padding(.bottom, 8)
@@ -96,7 +182,7 @@ struct ContentView: View {
                         Button { searchQuery = "" } label: {
                             Image(systemName: "xmark.circle.fill")
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(StationButtonStyle())
                         .accessibilityLabel("清除搜索")
                     }
                 }
@@ -237,7 +323,7 @@ struct ContentView: View {
             .help("清空当前分类")
             .disabled(isSearching || model.orderedItems(in: model.activeCategory).isEmpty)
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(StationButtonStyle())
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
@@ -360,7 +446,7 @@ struct ContentView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 28)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(StationButtonStyle())
             .help("添加分类")
             .accessibilityLabel("添加分类")
 
@@ -424,7 +510,7 @@ struct ContentView: View {
                     .padding(.vertical, 7)
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(StationButtonStyle())
                 .background(
                     RoundedRectangle(cornerRadius: 10)
                         .fill(
@@ -485,7 +571,7 @@ struct ContentView: View {
             .padding(.vertical, 7)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StationButtonStyle())
         .background(RoundedRectangle(cornerRadius: 10).fill(
             dropTargetCategory == .files ? Color.accentColor.opacity(0.42)
                 : model.activeCategory == .files ? Color.accentColor.opacity(0.16) : .clear
@@ -557,6 +643,8 @@ private struct AppearanceEditor: View {
             control("背景不透明度", key: \.backgroundOpacity, ends: "左侧透明 · 右侧实色")
             Text("实时生效并自动保存，图片保持原样。").font(.caption).foregroundStyle(.secondary)
             Button("恢复系统默认") { model.updateAppearance(nil) }
+                .buttonStyle(.bordered)
+                .modifier(StationHoverEffect())
         }
         .padding(20)
         .frame(width: 300)
@@ -622,7 +710,9 @@ private struct ItemCard: View {
                         Image(systemName: "folder")
                     }
                     .menuStyle(.borderlessButton)
+                    .buttonStyle(.borderless)
                     .fixedSize()
+                    .modifier(StationHoverEffect())
                     .help("移动到其他分类")
                 }
 
@@ -633,7 +723,7 @@ private struct ItemCard: View {
                 }
                 .help("删除")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(StationButtonStyle())
 
             TextField("命名后可搜索", text: $nameDraft)
                 .textFieldStyle(.plain)
@@ -667,17 +757,21 @@ private struct ItemCard: View {
                     Label(isTextExpanded ? "收起为两行" : "展开文字", systemImage: isTextExpanded ? "chevron.up" : "chevron.down")
                 }
                 .font(.caption)
-                .buttonStyle(.borderless)
+                .buttonStyle(StationButtonStyle())
                 Button("查看全文") { showsFullText = true }
                     .font(.caption)
-                    .buttonStyle(.borderless)
+                    .buttonStyle(StationButtonStyle())
                     .sheet(isPresented: $showsFullText) {
                         VStack(spacing: 12) {
                             HStack {
                                 Text("文字全文").font(.headline)
                                 Spacer()
                                 Button("复制全文") { model.copyToClipboard(item) }
+                                    .buttonStyle(.bordered)
+                                    .modifier(StationHoverEffect())
                                 Button("关闭") { showsFullText = false }
+                                    .buttonStyle(.bordered)
+                                    .modifier(StationHoverEffect())
                                     .keyboardShortcut(.cancelAction)
                             }
                             FullTextReader(text: item.text ?? "")
@@ -715,7 +809,7 @@ private struct ItemCard: View {
                         Label("在 Finder 中显示", systemImage: "folder")
                     }
                     .font(.caption)
-                    .buttonStyle(.borderless)
+                    .buttonStyle(StationButtonStyle())
                 } else {
                     Label("文件副本已丢失", systemImage: "exclamationmark.triangle")
                         .font(.caption)
