@@ -46,12 +46,13 @@ private struct StationHoverTracker: NSViewRepresentable {
 
 private struct StationHoverEffect: ViewModifier {
     var isPressed = false
+    var isActive = false
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     func body(content: Content) -> some View {
-        let highlighted = isHovered && isEnabled
+        let highlighted = (isHovered || isActive) && isEnabled
         content
             .background {
                 RoundedRectangle(cornerRadius: 7)
@@ -88,6 +89,7 @@ private struct StationButtonStyle: ButtonStyle {
 }
 
 struct ContentView: View {
+    @GestureState private var isDraggingPanel = false
     @ObservedObject var model: BoardModel
     @ObservedObject var presentation: PanelPresentation
 
@@ -144,6 +146,9 @@ struct ContentView: View {
         minimumDistance: CGFloat
     ) -> some Gesture {
         DragGesture(minimumDistance: minimumDistance, coordinateSpace: .global)
+            .updating($isDraggingPanel) { _, dragging, _ in
+                dragging = true
+            }
             .onChanged { value in
                 let gestureStartMouse = NSPoint(
                     x: NSEvent.mouseLocation.x - value.translation.width,
@@ -472,6 +477,7 @@ struct ContentView: View {
             .contentShape(Rectangle())
             .accessibilityElement(children: .combine)
             .accessibilityLabel("自由拖动悬浮中转站")
+            .modifier(StationHoverEffect(isActive: isDraggingPanel))
         }
         .padding(8)
         .frame(width: PanelGeometry.railWidth)
