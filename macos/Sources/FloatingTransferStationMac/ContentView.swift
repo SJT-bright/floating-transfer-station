@@ -502,17 +502,29 @@ struct ContentView: View {
 
     private var categoryRail: some View {
         VStack(spacing: 8) {
-            Button {
-                newCategoryName = ""
-                isAddingCategory = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(maxWidth: .infinity, minHeight: 28)
+            HStack(spacing: 4) {
+                Button {
+                    newCategoryName = ""
+                    isAddingCategory = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(maxWidth: .infinity, minHeight: 28)
+                }
+                .buttonStyle(StationButtonStyle())
+                .help("添加分类")
+                .accessibilityLabel("添加分类")
+
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(textColor.opacity(0.85))
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+                    .modifier(StationHoverEffect(isActive: isDraggingPanel))
+                    .help("按住拖动窗口")
+                    .accessibilityLabel("拖动悬浮中转站")
+                    .highPriorityGesture(panelVerticalDragGesture(minimumDistance: 8))
             }
-            .buttonStyle(StationButtonStyle())
-            .help("添加分类")
-            .accessibilityLabel("添加分类")
 
             ScrollView {
                 categoryButtons
@@ -520,29 +532,9 @@ struct ContentView: View {
 
             Divider()
             fileStationButton
-
-            VStack(spacing: 5) {
-                Capsule()
-                    .fill(Color.secondary.opacity(0.45))
-                    .frame(width: 24, height: 3)
-                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("按住拖动")
-                    .font(.system(size: 9, weight: .medium))
-            }
-            .foregroundStyle(textColor.opacity(0.75))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("自由拖动悬浮中转站")
-            .modifier(StationHoverEffect(isActive: isDraggingPanel))
         }
         .padding(8)
         .frame(width: PanelGeometry.railWidth)
-        .help("按住竖栏自由拖动，靠近屏幕左右边缘自动吸附")
-        .contentShape(Rectangle())
-        .highPriorityGesture(panelVerticalDragGesture(minimumDistance: 8))
     }
 
     private var categoryButtons: some View {
@@ -738,6 +730,7 @@ private struct ItemCard: View {
     @State private var showsFullText = false
     @State private var isTextExpanded = false
     @State private var nameDraft = ""
+    @State private var isRenamingItem = false
     @FocusState private var isEditingName: Bool
 
     @Environment(\.colorScheme) private var colorScheme
@@ -804,20 +797,47 @@ private struct ItemCard: View {
             }
             .buttonStyle(StationButtonStyle())
 
-            TextField("命名后可搜索", text: $nameDraft)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-                .padding(.horizontal, 7)
-                .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
-                .accessibilityLabel("内容名称")
-                .focused($isEditingName)
-                .onAppear { nameDraft = item.name ?? "" }
-                .onSubmit { saveName() }
-                .onChange(of: isEditingName) { focused in
-                    if !focused { saveName() }
+            HStack(spacing: 6) {
+                if isRenamingItem {
+                    TextField("输入名称", text: $nameDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .focused($isEditingName)
+                        .onAppear { isEditingName = true }
+                        .onSubmit { finishNaming() }
+                        .onChange(of: isEditingName) { focused in
+                            if !focused { finishNaming() }
+                        }
+                } else if let name = item.name, !name.isEmpty {
+                    if item.kind == .text && item.category != .inbox {
+                        Button {
+                            isTextExpanded.toggle()
+                        } label: {
+                            Label(name, systemImage: isTextExpanded ? "chevron.down" : "chevron.right")
+                                .lineLimit(1)
+                        }
+                        .buttonStyle(StationButtonStyle())
+                        .accessibilityLabel(isTextExpanded ? "收起\(name)" : "展开\(name)")
+                    } else {
+                        Text(name).lineLimit(1)
+                    }
+                } else {
+                    Button("添加名称") { beginNaming() }
+                        .buttonStyle(StationButtonStyle())
+                        .foregroundStyle(textColor.opacity(0.7))
                 }
-                .onDisappear { saveName() }
+                Spacer(minLength: 0)
+                if !isRenamingItem {
+                    Button { beginNaming() } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(StationButtonStyle())
+                    .accessibilityLabel("给内容命名")
+                }
+            }
+            .font(.system(size: 12))
+            .onAppear { nameDraft = item.name ?? "" }
+            .onDisappear { if isRenamingItem { saveName() } }
 
             if showsCategory {
                 Text(model.displayName(for: item.category))
@@ -826,38 +846,41 @@ private struct ItemCard: View {
             }
 
             if item.kind == .text {
-                FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor), expanded: isTextExpanded)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .help("在文字框内滚动查看完整内容；拖动左上角“文字”可拖出全文")
-                Button {
-                    isTextExpanded.toggle()
-                } label: {
-                    Label(isTextExpanded ? "收起为两行" : "展开文字", systemImage: isTextExpanded ? "chevron.up" : "chevron.down")
-                }
-                .font(.caption)
-                .buttonStyle(StationButtonStyle())
-                Button("查看全文") { showsFullText = true }
+                if item.category == .inbox || item.name == nil || isTextExpanded {
+                    FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor), expanded: isTextExpanded)
+                        .frame(maxWidth: .infinity)
+                        .clipped()
+                        .help("在文字框内滚动查看完整内容；拖动左上角“文字”可拖出全文")
+                    Button {
+                        isTextExpanded.toggle()
+                    } label: {
+                        Label(isTextExpanded ? (item.category != .inbox && item.name != nil ? "收起为名称" : "收起为两行") : "展开文字",
+                              systemImage: isTextExpanded ? "chevron.up" : "chevron.down")
+                    }
                     .font(.caption)
                     .buttonStyle(StationButtonStyle())
-                    .sheet(isPresented: $showsFullText) {
-                        VStack(spacing: 12) {
-                            HStack {
-                                Text("文字全文").font(.headline)
-                                Spacer()
-                                Button("复制全文") { model.copyToClipboard(item) }
-                                    .buttonStyle(.bordered)
-                                    .modifier(StationHoverEffect())
-                                Button("关闭") { showsFullText = false }
-                                    .buttonStyle(.bordered)
-                                    .modifier(StationHoverEffect())
-                                    .keyboardShortcut(.cancelAction)
+                    Button("查看全文") { showsFullText = true }
+                        .font(.caption)
+                        .buttonStyle(StationButtonStyle())
+                        .sheet(isPresented: $showsFullText) {
+                            VStack(spacing: 12) {
+                                HStack {
+                                    Text("文字全文").font(.headline)
+                                    Spacer()
+                                    Button("复制全文") { model.copyToClipboard(item) }
+                                        .buttonStyle(.bordered)
+                                        .modifier(StationHoverEffect())
+                                    Button("关闭") { showsFullText = false }
+                                        .buttonStyle(.bordered)
+                                        .modifier(StationHoverEffect())
+                                        .keyboardShortcut(.cancelAction)
+                                }
+                                FullTextReader(text: item.text ?? "")
                             }
-                            FullTextReader(text: item.text ?? "")
+                            .padding(16)
+                            .frame(width: 420, height: 440)
                         }
-                        .padding(16)
-                        .frame(width: 420, height: 440)
-                    }
+                }
             } else if item.kind == .file {
                 if let url = model.fileURL(for: item) {
                     HStack(spacing: 10) {
@@ -964,6 +987,17 @@ private struct ItemCard: View {
 
     private func saveName() {
         model.renameItem(item.id, to: nameDraft)
+    }
+
+    private func beginNaming() {
+        nameDraft = item.name ?? ""
+        isRenamingItem = true
+    }
+
+    private func finishNaming() {
+        guard isRenamingItem else { return }
+        saveName()
+        isRenamingItem = false
     }
 }
 

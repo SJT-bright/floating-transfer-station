@@ -32,6 +32,7 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
     private weak var layer: CALayer?
     private var token: String?
     private var completion: (() -> Void)?
+    private var previousRasterization: (enabled: Bool, scale: CGFloat)?
 
     var isRunning: Bool { token != nil }
 
@@ -63,6 +64,9 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
         self.layer = layer
         self.token = token
         self.completion = completion
+        previousRasterization = (layer.shouldRasterize, layer.rasterizationScale)
+        layer.rasterizationScale = NSScreen.main?.backingScaleFactor ?? 2
+        layer.shouldRasterize = true
         let animation = Self.animation(reduceMotion: reduceMotion, towardLeft: towardLeft)
         animation.setValue(token, forKey: Self.tokenKey)
         animation.delegate = self
@@ -73,6 +77,11 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
         token = nil
         completion = nil
         layer?.removeAnimation(forKey: Self.animationKey)
+        if let layer, let previousRasterization {
+            layer.shouldRasterize = previousRasterization.enabled
+            layer.rasterizationScale = previousRasterization.scale
+        }
+        previousRasterization = nil
         layer = nil
     }
 

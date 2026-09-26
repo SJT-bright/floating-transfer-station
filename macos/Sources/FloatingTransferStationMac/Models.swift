@@ -21,10 +21,10 @@ struct BoardCategory: RawRepresentable, Codable, Hashable, Identifiable {
     }
 
     static let visibleCases: [BoardCategory] = [
+        .inbox,
         .customerOriginal,
         .reference,
         .prompt,
-        .inbox,
         .files
     ]
 

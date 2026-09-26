@@ -260,8 +260,10 @@ enum MacCoreTests {
         motion.start(on: layer, reduceMotion: false) { completed += 1 }
         let oldAnimation = try require(layer.animation(forKey: PanelCollapseMotion.animationKey), "collapse did not start")
         try check(motion.isRunning && completed == 0, "collapse committed before its animation finished")
+        try check(layer.shouldRasterize, "collapse is still compositing every live subview")
         motion.cancel()
         try check(!motion.isRunning && layer.animation(forKey: PanelCollapseMotion.animationKey) == nil, "cancel did not remove collapse")
+        try check(!layer.shouldRasterize, "cancelled collapse left rasterization enabled")
         try check(layer.bounds == bounds && CATransform3DIsIdentity(layer.transform) && layer.opacity == 1, "cancelled collapse left a hidden or shifted panel")
 
         motion.start(on: layer, reduceMotion: false) { completed += 1 }
@@ -270,6 +272,7 @@ enum MacCoreTests {
         let current = try require(layer.animation(forKey: PanelCollapseMotion.animationKey), "new collapse missing")
         motion.animationDidStop(current, finished: true)
         try check(completed == 1 && !motion.isRunning, "completed collapse did not commit exactly once")
+        try check(!layer.shouldRasterize, "finished collapse left rasterization enabled")
         motion.animationDidStop(current, finished: true)
         try check(completed == 1, "collapse completion ran twice")
         try check(layer.bounds == bounds && CATransform3DIsIdentity(layer.transform) && layer.opacity == 1, "finished collapse left animation state behind")
@@ -521,8 +524,8 @@ enum MacCoreTests {
 
         let model = BoardModel(store: store, monitorsClipboard: false)
         try check(
-            BoardCategory.visibleCases == [.customerOriginal, .reference, .prompt, .inbox, .files],
-            "the rail lost an existing category or the fixed file station"
+            BoardCategory.visibleCases == [.inbox, .customerOriginal, .reference, .prompt, .files],
+            "inbox must be first without losing other categories or the fixed file station"
         )
         try check(
             model.displayName(for: .customerOriginal) == "人物资产"
