@@ -32,7 +32,128 @@ enum MacCoreTests {
         try testNamesSearchAndPersistence()
         try testExpandedTextFitsActualLines()
         try testFreePositionAndBothEdgeSnapping()
-        print("macOS core tests passed (22 tests)")
+        try testFileImportCopiesAndPersistsOriginalBytes()
+        try testFileStoreRejectsUnsafePaths()
+        try testFileImportRollsBackFailedBoardSave()
+        print("macOS core tests passed (25 tests)")
+    }
+
+    private static func waitUntil(_ predicate: () -> Bool) throws {
+        let deadline = Date().addingTimeInterval(8)
+        while !predicate() && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        try check(predicate(), "asynchronous file operation timed out")
+    }
+
+    private static func testFileImportCopiesAndPersistsOriginalBytes() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = directory.appendingPathComponent("first/同名素材.bin")
+        let second = directory.appendingPathComponent("second/同名素材.bin")
+        for url in [first, second] {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        }
+        let firstBytes = Data([0, 1, 2, 255, 10])
+        let secondBytes = Data([42, 43])
+        try firstBytes.write(to: first)
+        try secondBytes.write(to: second)
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory.appendingPathComponent("data")))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        model.selectCategory(.prompt)
+        model.importFiles([first, second])
+        try waitUntil { !model.isImportingFiles }
+        let files = model.orderedItems(in: .files)
+        try check(files.count == 2 && files.allSatisfy { $0.kind == .file }, "files did not enter dedicated station")
+        let firstURL = try require(model.fileURL(for: files[0]), "missing first managed file")
+        let secondURL = try require(model.fileURL(for: files[1]), "missing second managed file")
+        let savedFirst = try Data(contentsOf: firstURL)
+        let savedSecond = try Data(contentsOf: secondURL)
+        try check(savedFirst == firstBytes && savedSecond == secondBytes, "batch order or original file bytes changed")
+        try check(firstURL != secondURL && files[0].fileName == "同名素材.bin" && files[0].fileSize == 5, "same-name imports collided or lost metadata")
+        try check(files[0].name == nil && model.searchNamedItems("同名素材").isEmpty, "filename was unexpectedly made a manual search name")
+        model.renameItem(files[0].id, to: "交付素材")
+        try check(model.searchNamedItems("交付").count == 1, "file naming/search failed")
+        let provider = model.dragProvider(for: files[0])
+        try check(provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier), "file drag lacks file URL")
+        var loadedURL: URL?
+        var loaded = false
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { value, _ in
+            DispatchQueue.main.async {
+                if let url = value as? URL { loadedURL = url }
+                else if let data = value as? Data, let string = String(data: data, encoding: .utf8) { loadedURL = URL(string: string) }
+                loaded = true
+            }
+        }
+        try waitUntil { loaded }
+        let exported = try require(loadedURL, "drag provider could not load real URL")
+        let exportBytes = try Data(contentsOf: exported)
+        try check(exportBytes == firstBytes && exported.lastPathComponent == first.lastPathComponent, "drag export changed filename/content")
+        model.move(files[0].id, to: .inbox)
+        try check(model.orderedItems(in: .files).count == 2, "dedicated file moved into clipboard category")
+        let restored = BoardModel(store: store, monitorsClipboard: false)
+        try check(restored.orderedItems(in: .files).count == 2, "files lost after restart")
+        restored.delete(files[0].id)
+        try check(!FileManager.default.fileExists(atPath: firstURL.path), "delete retained managed copy")
+        try check(FileManager.default.fileExists(atPath: exported.path), "delete broke an exported file used by another app")
+        restored.selectCategory(.files)
+        restored.clearActiveCategory()
+        let originalFirst = try Data(contentsOf: first)
+        let originalSecond = try Data(contentsOf: second)
+        try check(originalFirst == firstBytes && originalSecond == secondBytes && store.loadBoard().isEmpty, "delete/clear modified original files")
+        restored.importProviders([NSItemProvider(object: first as NSURL)], to: .files)
+        try waitUntil { restored.orderedItems(in: .files).count == 1 && !restored.isImportingFiles }
+        try check(restored.items.first?.fileName == first.lastPathComponent, "dropped file URL was not imported")
+        restored.renameCategory(.files, to: "改名")
+        try check(restored.displayName(for: .files) == "文件中转站", "fixed file station can be renamed")
+    }
+
+    private static func testFileStoreRejectsUnsafePaths() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory.appendingPathComponent("data")))
+        let outside = directory.appendingPathComponent("original.txt")
+        try Data("untouched".utf8).write(to: outside)
+        let stored = try store.storeFile(outside, id: UUID())
+        try check(store.managedFileURL(relativePath: stored.relativePath) != nil, "valid file path rejected")
+        try check(store.managedFileURL(relativePath: "files/../../original.txt") == nil, "path traversal accepted")
+        let linkID = UUID().uuidString.lowercased()
+        let symlink = store.paths.dataDirectory.appendingPathComponent("files/\(linkID)")
+        try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: directory)
+        try check(store.managedFileURL(relativePath: "files/\(linkID)/original.txt") == nil, "symlink escape accepted")
+        do {
+            _ = try store.storeFile(directory, id: UUID())
+            throw TestFailure(description: "directory accepted as ordinary file")
+        } catch is TestFailure { throw TestFailure(description: "directory accepted as ordinary file") }
+        catch { }
+        let link = directory.appendingPathComponent("link.txt")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        do {
+            _ = try store.storeFile(link, id: UUID())
+            throw TestFailure(description: "symbolic link source accepted")
+        } catch is TestFailure { throw TestFailure(description: "symbolic link source accepted") }
+        catch { }
+        try check(!store.deleteManagedFile(relativePath: "files/../../original.txt"), "unsafe delete accepted")
+        try check(FileManager.default.fileExists(atPath: outside.path), "unsafe path deleted original")
+    }
+
+    private static func testFileImportRollsBackFailedBoardSave() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory.appendingPathComponent("data")))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        let source = directory.appendingPathComponent("原件.txt")
+        try Data("original".utf8).write(to: source)
+        try FileManager.default.createDirectory(at: store.paths.boardFile, withIntermediateDirectories: true)
+        model.importFiles([source])
+        try waitUntil { !model.isImportingFiles }
+        try check(model.items.isEmpty, "failed board write left phantom imported item")
+        let enumerator = FileManager.default.enumerator(at: store.paths.dataDirectory.appendingPathComponent("files"), includingPropertiesForKeys: [.isRegularFileKey])
+        let remaining = (enumerator?.allObjects as? [URL] ?? []).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        try check(remaining.isEmpty && FileManager.default.fileExists(atPath: source.path), "rollback left managed orphan or removed source")
+        let exports = FileManager.default.enumerator(at: store.paths.dragExportsDirectory, includingPropertiesForKeys: [.isRegularFileKey])
+        let exportedFiles = (exports?.allObjects as? [URL] ?? []).filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        try check(exportedFiles.isEmpty, "rollback retained unpublished export files")
     }
 
     private static func testFreePositionAndBothEdgeSnapping() throws {
@@ -337,8 +458,8 @@ enum MacCoreTests {
 
         let model = BoardModel(store: store, monitorsClipboard: false)
         try check(
-            BoardCategory.visibleCases == [.customerOriginal, .reference, .prompt, .inbox],
-            "the rail no longer contains the four requested categories"
+            BoardCategory.visibleCases == [.customerOriginal, .reference, .prompt, .inbox, .files],
+            "the rail lost an existing category or the fixed file station"
         )
         try check(
             model.displayName(for: .customerOriginal) == "人物资产"

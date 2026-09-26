@@ -6,6 +6,7 @@ struct AppPaths {
     let boardFile: URL
     let settingsFile: URL
     let imagesDirectory: URL
+    let filesDirectory: URL
     let dragExportsDirectory: URL
 
     init(dataDirectory: URL, dragExportsDirectory: URL? = nil) {
@@ -14,6 +15,7 @@ struct AppPaths {
         boardFile = normalized.appendingPathComponent("board.json", isDirectory: false)
         settingsFile = normalized.appendingPathComponent("settings.json", isDirectory: false)
         imagesDirectory = normalized.appendingPathComponent("images", isDirectory: true)
+        filesDirectory = normalized.appendingPathComponent("files", isDirectory: true)
         self.dragExportsDirectory = (
             dragExportsDirectory
                 ?? normalized.appendingPathComponent("drag-exports", isDirectory: true)
@@ -79,6 +81,12 @@ final class LocalStore {
                     return false
                 }
                 return fileManager.fileExists(atPath: imageURL.path)
+            case .file:
+                guard item.category == .files,
+                      let path = item.fileRelativePath,
+                      let url = managedFileURL(relativePath: path),
+                      let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else { return false }
+                return values.isRegularFile == true
             }
         }
     }
@@ -133,6 +141,104 @@ final class LocalStore {
             return nil
         }
         return candidate
+    }
+
+    func storeFile(_ source: URL, id: UUID) throws -> (relativePath: String, name: String, size: Int64) {
+        guard source.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw CocoaError(.fileReadUnsupportedScheme)
+        }
+        let name = source.lastPathComponent
+        let path = "files/\(id.uuidString.lowercased())/\(name)"
+        guard let destination = managedFileURL(relativePath: path) else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        let directory = destination.deletingLastPathComponent()
+        guard !fileManager.fileExists(atPath: directory.path) else { throw CocoaError(.fileWriteFileExists) }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try fileManager.copyItem(at: source, to: destination)
+            let size = try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            return (path, name, Int64(size))
+        } catch {
+            // This UUID directory belongs exclusively to this attempted import.
+            try? fileManager.removeItem(at: directory)
+            throw error
+        }
+    }
+
+    func managedFileURL(relativePath: String) -> URL? {
+        let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count == 3, components[0] == "files",
+              UUID(uuidString: String(components[1])) != nil,
+              !components[2].isEmpty, components[2] != ".", components[2] != "..",
+              !relativePath.contains("\\") else { return nil }
+        let candidate = paths.dataDirectory.appendingPathComponent(relativePath).standardizedFileURL
+        let expected = paths.dataDirectory.resolvingSymlinksInPath().appendingPathComponent(relativePath).standardizedFileURL
+        guard candidate.resolvingSymlinksInPath() == expected else { return nil }
+        return candidate
+    }
+
+    private func fileExportURL(relativePath: String) -> URL? {
+        guard managedFileURL(relativePath: relativePath) != nil else { return nil }
+        let candidate = paths.dragExportsDirectory.appendingPathComponent(relativePath).standardizedFileURL
+        let expected = paths.dragExportsDirectory.resolvingSymlinksInPath().appendingPathComponent(relativePath).standardizedFileURL
+        return candidate.resolvingSymlinksInPath() == expected ? candidate : nil
+    }
+
+    func existingFileExport(relativePath: String) -> URL? {
+        guard let url = fileExportURL(relativePath: relativePath),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true else { return nil }
+        return url
+    }
+
+    func exportFileForDrag(relativePath: String) throws -> URL {
+        guard let source = managedFileURL(relativePath: relativePath),
+              let destination = fileExportURL(relativePath: relativePath) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        if let existing = existingFileExport(relativePath: relativePath) { return existing }
+        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                        attributes: [.posixPermissions: 0o755])
+        do {
+            try fileManager.copyItem(at: source, to: destination)
+            try fileManager.setAttributes([.posixPermissions: 0o644], ofItemAtPath: destination.path)
+            return destination
+        } catch {
+            try? fileManager.removeItem(at: destination)
+            throw error
+        }
+    }
+
+    @discardableResult
+    func deleteManagedFile(relativePath: String?) -> Bool {
+        guard let path = relativePath, let url = managedFileURL(relativePath: path) else { return false }
+        guard fileManager.fileExists(atPath: url.path) else { return true }
+        do {
+            try fileManager.removeItem(at: url)
+            // Leave public drag exports intact: another app may still reference them.
+            let directory = url.deletingLastPathComponent()
+            if (try? fileManager.contentsOfDirectory(atPath: directory.path).isEmpty) == true {
+                try? fileManager.removeItem(at: directory)
+            }
+            return true
+        } catch { return false }
+    }
+
+    // Only call for fresh imports that have never been published in the board.
+    func discardUnpublishedFile(relativePath: String) {
+        _ = deleteManagedFile(relativePath: relativePath)
+        if let export = fileExportURL(relativePath: relativePath) {
+            try? fileManager.removeItem(at: export)
+            let directory = export.deletingLastPathComponent()
+            if (try? fileManager.contentsOfDirectory(atPath: directory.path).isEmpty) == true {
+                try? fileManager.removeItem(at: directory)
+            }
+        }
     }
 
     func exportImageForDrag(relativePath: String) throws -> URL {

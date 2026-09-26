@@ -9,10 +9,14 @@ final class BoardModel: ObservableObject {
     let defaultCaptureCategory: BoardCategory = .inbox
     @Published private(set) var settings: WindowSettings
     @Published private(set) var statusText = ""
+    @Published private(set) var isImportingFiles = false
 
     private let store: LocalStore
     private var clipboardTimer: Timer?
     private var lastPasteboardChangeCount: Int
+    private let fileImportQueue = DispatchQueue(label: "com.oiawlm.station.file-import", qos: .userInitiated)
+    private var pendingFileImports = 0
+    private var preparingExports = Set<String>()
 
     init(
         store: LocalStore = LocalStore(),
@@ -34,7 +38,7 @@ final class BoardModel: ObservableObject {
     }
 
     func displayName(for category: BoardCategory) -> String {
-        settings.displayName(for: category)
+        category == .files ? category.defaultDisplayName : settings.displayName(for: category)
     }
 
     func orderedItems(in category: BoardCategory) -> [BoardItem] {
@@ -97,6 +101,7 @@ final class BoardModel: ObservableObject {
     }
 
     func addText(_ rawText: String, to category: BoardCategory? = nil) {
+        guard category != .files else { return }
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return
@@ -115,6 +120,7 @@ final class BoardModel: ObservableObject {
     }
 
     func addImageFiles(_ urls: [URL], to category: BoardCategory? = nil) {
+        if category == .files { importFiles(urls); return }
         let target = category ?? defaultCaptureCategory
         var storedItems: [BoardItem] = []
 
@@ -149,6 +155,7 @@ final class BoardModel: ObservableObject {
     }
 
     func addImages(_ images: [NSImage], to category: BoardCategory? = nil) {
+        guard category != .files else { return }
         let target = category ?? defaultCaptureCategory
         var storedItems: [BoardItem] = []
 
@@ -201,6 +208,7 @@ final class BoardModel: ObservableObject {
 
     func move(_ id: UUID, to targetCategory: BoardCategory) {
         guard var item = items.first(where: { $0.id == id }),
+              item.kind != .file, targetCategory != .files,
               item.category != targetCategory
         else {
             return
@@ -225,6 +233,7 @@ final class BoardModel: ObservableObject {
     @discardableResult
     func copyImage(_ id: UUID, to targetCategory: BoardCategory) -> Bool {
         guard let source = items.first(where: { $0.id == id }),
+              targetCategory != .files,
               source.kind == .image,
               source.category != targetCategory,
               let relativePath = source.imageRelativePath,
@@ -270,6 +279,7 @@ final class BoardModel: ObservableObject {
             items.removeAll { $0.id == id }
         }) {
             _ = store.deleteManagedImage(relativePath: item.imageRelativePath)
+            _ = store.deleteManagedFile(relativePath: item.fileRelativePath)
         }
     }
 
@@ -284,14 +294,26 @@ final class BoardModel: ObservableObject {
             items.removeAll { $0.category == category }
         }) {
             removed.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
+            removed.forEach { _ = store.deleteManagedFile(relativePath: $0.fileRelativePath) }
         }
     }
 
     func copyToClipboard(_ item: BoardItem) {
+        if item.kind == .file {
+            guard let url = readyFileExport(for: item) else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            let copied = pasteboard.writeObjects([url as NSURL])
+            lastPasteboardChangeCount = pasteboard.changeCount
+            showStatus(copied ? "已复制文件，可粘贴到其他应用。" : "文件复制失败，请重试。")
+            return
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
 
         switch item.kind {
+        case .file:
+            return
         case .text:
             guard let text = item.text else {
                 return
@@ -314,6 +336,11 @@ final class BoardModel: ObservableObject {
 
     func dragProvider(for item: BoardItem) -> NSItemProvider {
         switch item.kind {
+        case .file:
+            guard let url = readyFileExport(for: item) else { return NSItemProvider() }
+            let provider = NSItemProvider(object: url as NSURL)
+            provider.suggestedName = item.fileName ?? url.lastPathComponent
+            return provider
         case .text:
             return NSItemProvider(object: (item.text ?? "") as NSString)
         case .image:
@@ -387,7 +414,90 @@ final class BoardModel: ObservableObject {
         return store.managedImageURL(relativePath: relativePath)
     }
 
+    func fileURL(for item: BoardItem) -> URL? {
+        guard item.kind == .file, let path = item.fileRelativePath else { return nil }
+        return store.managedFileURL(relativePath: path)
+    }
+
+    func importFiles(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        pendingFileImports += 1
+        isImportingFiles = true
+        showStatus("正在复制文件到中转站…")
+        let store = self.store
+        fileImportQueue.async { [self] in
+            var imported: [BoardItem] = []
+            var failed = false
+            for url in urls {
+                let id = UUID()
+                var path: String?
+                do {
+                    let stored = try store.storeFile(url, id: id)
+                    path = stored.relativePath
+                    _ = try store.exportFileForDrag(relativePath: stored.relativePath)
+                    imported.append(BoardItem(id: id, kind: .file, category: .files, order: 0,
+                                              fileRelativePath: stored.relativePath,
+                                              fileName: stored.name, fileSize: stored.size))
+                } catch {
+                    if let path { store.discardUnpublishedFile(relativePath: path) }
+                    failed = true
+                }
+            }
+            let results = imported
+            let hadFailures = failed
+            DispatchQueue.main.async {
+                guard !results.isEmpty else {
+                    self.completeFileImport()
+                    self.showStatus("导入失败：请选择可读取的普通文件；暂不支持文件夹或快捷链接。")
+                    return
+                }
+                if self.persistMutation(failureMessage: "文件未保存，请重试。", {
+                    self.insertAtTopOfNormalRegion(results, in: .files)
+                }) {
+                    self.completeFileImport()
+                    self.showStatus(hadFailures
+                        ? "已导入 \(results.count) 个文件；部分文件无法读取，文件夹和链接不支持。"
+                        : "已导入 \(results.count) 个文件，原文件不变。")
+                } else {
+                    self.fileImportQueue.async {
+                        results.forEach {
+                            if let path = $0.fileRelativePath { store.discardUnpublishedFile(relativePath: path) }
+                        }
+                        DispatchQueue.main.async { self.completeFileImport() }
+                    }
+                }
+            }
+        }
+    }
+
+    private func completeFileImport() {
+        pendingFileImports -= 1
+        isImportingFiles = pendingFileImports > 0
+    }
+
+    private func readyFileExport(for item: BoardItem) -> URL? {
+        guard let path = item.fileRelativePath, fileURL(for: item) != nil else {
+            showStatus("文件已经不存在。")
+            return nil
+        }
+        if let url = store.existingFileExport(relativePath: path) { return url }
+        showStatus("正在准备文件副本，完成后请再次拖动或复制。")
+        guard preparingExports.insert(path).inserted else { return nil }
+        fileImportQueue.async { [self] in
+            let result = Result { try self.store.exportFileForDrag(relativePath: path) }
+            DispatchQueue.main.async {
+                self.preparingExports.remove(path)
+                switch result {
+                case .success: self.showStatus("文件已准备好，请再次拖动或复制。")
+                case .failure: self.showStatus("文件导出失败，请检查文件是否存在及磁盘空间。")
+                }
+            }
+        }
+        return nil
+    }
+
     func renameCategory(_ category: BoardCategory, to rawName: String) {
+        guard category != .files else { return }
         let name = String(rawName.prefix(6))
         let previous = settings
         settings.categoryNames[category.rawValue] = name
@@ -462,6 +572,8 @@ final class BoardModel: ObservableObject {
                 continue
             }
 
+            if category == .files { continue }
+
             if provider.canLoadObject(ofClass: NSImage.self) {
                 group.enter()
                 provider.loadObject(ofClass: NSImage.self) { object, _ in
@@ -494,7 +606,13 @@ final class BoardModel: ObservableObject {
             }
             let orderedFiles = fileURLs.sorted { $0.0 < $1.0 }.map(\.1)
             let orderedImages = images.sorted { $0.0 < $1.0 }.map(\.1)
-            if !orderedFiles.isEmpty {
+            if category == .files {
+                if orderedFiles.isEmpty {
+                    self.showStatus("请从 Finder 拖入文件，或点击“导入文件”。")
+                } else {
+                    self.importFiles(orderedFiles)
+                }
+            } else if !orderedFiles.isEmpty {
                 self.addImageFiles(orderedFiles, to: category)
             } else if !orderedImages.isEmpty {
                 self.addImages(orderedImages, to: category)

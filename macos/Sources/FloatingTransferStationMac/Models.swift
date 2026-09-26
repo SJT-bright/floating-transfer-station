@@ -7,6 +7,7 @@ struct BoardCategory: RawRepresentable, Codable, Hashable, Identifiable {
     static let reference = BoardCategory(rawValue: "Reference")
     static let prompt = BoardCategory(rawValue: "Prompt")
     static let inbox = BoardCategory(rawValue: "Inbox")
+    static let files = BoardCategory(rawValue: "Files")
 
     init(rawValue: String) { self.rawValue = rawValue }
 
@@ -23,7 +24,8 @@ struct BoardCategory: RawRepresentable, Codable, Hashable, Identifiable {
         .customerOriginal,
         .reference,
         .prompt,
-        .inbox
+        .inbox,
+        .files
     ]
 
     var id: String { rawValue }
@@ -38,6 +40,8 @@ struct BoardCategory: RawRepresentable, Codable, Hashable, Identifiable {
             return "提示词"
         case .inbox:
             return "待分类"
+        case .files:
+            return "文件中转站"
         default:
             return "自定义"
         }
@@ -47,6 +51,7 @@ struct BoardCategory: RawRepresentable, Codable, Hashable, Identifiable {
 enum BoardItemKind: String, Codable {
     case image = "Image"
     case text = "Text"
+    case file = "File"
 }
 
 struct BoardItem: Codable, Identifiable, Equatable {
@@ -59,6 +64,9 @@ struct BoardItem: Codable, Identifiable, Equatable {
     var imageRelativePath: String?
     var isPinned: Bool
     var name: String?
+    var fileRelativePath: String?
+    var fileName: String?
+    var fileSize: Int64?
 
     // Bound list-layout work without modifying the stored/dragged text.
     var textPreview: String { String((text ?? "").prefix(600)) }
@@ -72,7 +80,10 @@ struct BoardItem: Codable, Identifiable, Equatable {
         text: String? = nil,
         imageRelativePath: String? = nil,
         isPinned: Bool = false,
-        name: String? = nil
+        name: String? = nil,
+        fileRelativePath: String? = nil,
+        fileName: String? = nil,
+        fileSize: Int64? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -83,6 +94,9 @@ struct BoardItem: Codable, Identifiable, Equatable {
         self.imageRelativePath = imageRelativePath
         self.isPinned = isPinned
         self.name = name
+        self.fileRelativePath = fileRelativePath
+        self.fileName = fileName
+        self.fileSize = fileSize
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -95,6 +109,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         case imageRelativePath
         case isPinned
         case name
+        case fileRelativePath, fileName, fileSize
     }
 
     init(from decoder: Decoder) throws {
@@ -108,6 +123,9 @@ struct BoardItem: Codable, Identifiable, Equatable {
         imageRelativePath = try container.decodeIfPresent(String.self, forKey: .imageRelativePath)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         name = try container.decodeIfPresent(String.self, forKey: .name)
+        fileRelativePath = try container.decodeIfPresent(String.self, forKey: .fileRelativePath)
+        fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
+        fileSize = try container.decodeIfPresent(Int64.self, forKey: .fileSize)
     }
 }
 

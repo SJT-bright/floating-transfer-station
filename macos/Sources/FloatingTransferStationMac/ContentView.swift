@@ -77,6 +77,16 @@ struct ContentView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 toolbar
+                if model.activeCategory == .files && !isSearching {
+                    Button(action: chooseFiles) {
+                        Label(model.isImportingFiles ? "正在导入文件…" : "导入文件", systemImage: "plus.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isImportingFiles)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+                }
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                     TextField("搜索名称（全部分类）", text: $searchQuery)
@@ -136,7 +146,7 @@ struct ContentView: View {
                 model.clearActiveCategory()
             }
         } message: {
-            Text("这会删除当前分类里的所有文字和应用管理的图片副本。")
+            Text("这会删除当前分类里的内容及应用管理的副本，不会删除导入前的原文件。")
         }
     }
 
@@ -217,7 +227,7 @@ struct ContentView: View {
                 Image(systemName: "pencil")
             }
             .help("重命名当前分类")
-            .disabled(isSearching)
+            .disabled(isSearching || model.activeCategory == .files)
 
             Button(role: .destructive) {
                 confirmsClear = true
@@ -242,6 +252,35 @@ struct ContentView: View {
         )
     }
 
+    private func chooseFiles() {
+        let parent = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible && !($0 is NSOpenPanel) })
+        let previousPolicy = NSApp.activationPolicy()
+        NSApp.setActivationPolicy(.regular)
+        defer { NSApp.setActivationPolicy(previousPolicy) }
+        NSApp.activate(ignoringOtherApps: true)
+        parent?.makeKeyAndOrderFront(nil)
+        let picker = NSOpenPanel()
+        picker.title = "导入文件到文件中转站"
+        picker.prompt = "导入"
+        picker.canChooseFiles = true
+        picker.canChooseDirectories = false
+        picker.allowsMultipleSelection = true
+        picker.resolvesAliases = true
+        presentation.isEditingAppearance = true
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            presentation.isEditingAppearance = false
+            if response == .OK {
+                searchQuery = ""
+                model.importFiles(picker.urls)
+            }
+            presentation.handleHover(false)
+        }
+        // A standalone modal panel owns keyboard focus independently of the
+        // always-on-top utility window. AppKit continues pumping UI events.
+        picker.level = .floating
+        finish(picker.runModal())
+    }
+
     @ViewBuilder
     private var board: some View {
         let visibleItems = isSearching ? model.searchNamedItems(searchQuery) : model.orderedItems(in: model.activeCategory)
@@ -259,10 +298,10 @@ struct ContentView: View {
                         Circle()
                             .stroke(Color.white.opacity(colorScheme == .dark ? 0.12 : 0.5))
                     )
-                Text(isSearching ? "没有匹配的名称" : "复制文字或图片，它会自动出现在这里")
+                Text(isSearching ? "没有匹配的名称" : model.activeCategory == .files ? "把文件拖到这里，随时再拖出去" : "复制文字或图片，它会自动出现在这里")
                     .font(.callout)
                     .multilineTextAlignment(.center)
-                Text(isSearching ? "只搜索你填写的名称，未命名内容不参与搜索" : "也可以把图片或文字直接拖进窗口")
+                Text(isSearching ? "只搜索你填写的名称，未命名内容不参与搜索" : model.activeCategory == .files ? "也可以点击“导入文件”多选文件，原文件保持不动" : "也可以把图片或文字直接拖进窗口")
                     .font(.caption)
                     .foregroundStyle(textColor.opacity(0.75))
             }
@@ -329,6 +368,9 @@ struct ContentView: View {
                 categoryButtons
             }
 
+            Divider()
+            fileStationButton
+
             VStack(spacing: 5) {
                 Capsule()
                     .fill(Color.secondary.opacity(0.45))
@@ -354,8 +396,9 @@ struct ContentView: View {
 
     private var categoryButtons: some View {
         VStack(spacing: 8) {
-            ForEach(model.categories) { category in
+            ForEach(model.categories.filter { $0 != .files }) { category in
                 Button {
+                    searchQuery = ""
                     model.selectCategory(category)
                 } label: {
                     VStack(spacing: 5) {
@@ -420,6 +463,42 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private var fileStationButton: some View {
+        Button {
+            searchQuery = ""
+            model.selectCategory(.files)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 17, weight: .medium))
+                Text("文件中转站")
+                    .font(.system(size: 10))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                Text("\(model.orderedItems(in: .files).count)")
+                    .font(.system(size: 9, design: .rounded))
+                    .foregroundStyle(textColor.opacity(0.75))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(RoundedRectangle(cornerRadius: 10).fill(
+            dropTargetCategory == .files ? Color.accentColor.opacity(0.42)
+                : model.activeCategory == .files ? Color.accentColor.opacity(0.16) : .clear
+        ))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(
+            dropTargetCategory == .files ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
+        ))
+        .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
+        .accessibilityLabel("文件中转站")
+        .help("导入或拖入文件，保留原文件")
+        .onDrop(of: [UTType.fileURL.identifier], delegate: FileStationDropDelegate(
+            model: model, targetedCategory: $dropTargetCategory
+        ))
     }
 
     private func icon(for category: BoardCategory) -> String {
@@ -508,8 +587,8 @@ private struct ItemCard: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Label(
-                    item.kind == .image ? "图片" : "文字",
-                    systemImage: item.kind == .image ? "photo" : "text.alignleft"
+                    item.kind == .file ? "文件" : item.kind == .image ? "图片" : "文字",
+                    systemImage: item.kind == .file ? "doc" : item.kind == .image ? "photo" : "text.alignleft"
                 )
                 .font(.caption)
                 .foregroundStyle(textColor.opacity(0.75))
@@ -532,18 +611,20 @@ private struct ItemCard: View {
                 }
                 .help("复制")
 
-                Menu {
-                    ForEach(model.categories.filter { $0 != item.category }) { category in
-                        Button(model.displayName(for: category)) {
-                            model.move(item.id, to: category)
+                if item.kind != .file {
+                    Menu {
+                        ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
+                            Button(model.displayName(for: category)) {
+                                model.move(item.id, to: category)
+                            }
                         }
+                    } label: {
+                        Image(systemName: "folder")
                     }
-                } label: {
-                    Image(systemName: "folder")
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("移动到其他分类")
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("移动到其他分类")
 
                 Button(role: .destructive) {
                     model.delete(item.id)
@@ -604,6 +685,42 @@ private struct ItemCard: View {
                         .padding(16)
                         .frame(width: 420, height: 440)
                     }
+            } else if item.kind == .file {
+                if let url = model.fileURL(for: item) {
+                    HStack(spacing: 10) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 32, height: 32)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.fileName ?? url.lastPathComponent)
+                                .font(.system(size: 12, weight: .medium))
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            if let size = item.fileSize {
+                                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                    .font(.caption2)
+                                    .foregroundStyle(textColor.opacity(0.75))
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onDrag { model.dragProvider(for: item) }
+                    .help("拖动文件到 Finder 或其他应用")
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } label: {
+                        Label("在 Finder 中显示", systemImage: "folder")
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderless)
+                } else {
+                    Label("文件副本已丢失", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(textColor.opacity(0.75))
+                }
             } else if let url = model.imageURL(for: item),
                       let image = NSImage(contentsOf: url) {
                 Image(nsImage: image)
@@ -656,10 +773,12 @@ private struct ItemCard: View {
             Button("复制") {
                 model.copyToClipboard(item)
             }
-            Menu("移动到") {
-                ForEach(model.categories.filter { $0 != item.category }) { category in
-                    Button(model.displayName(for: category)) {
-                        model.move(item.id, to: category)
+            if item.kind != .file {
+                Menu("移动到") {
+                    ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
+                        Button(model.displayName(for: category)) {
+                            model.move(item.id, to: category)
+                        }
                     }
                 }
             }
@@ -723,6 +842,9 @@ private struct BoardDropDelegate: DropDelegate {
     let category: BoardCategory
 
     func validateDrop(info: DropInfo) -> Bool {
+        if category == .files {
+            return !info.itemProviders(for: [UTType.fileURL.identifier]).isEmpty
+        }
         guard internalImageProvider(from: info) == nil else {
             return false
         }
@@ -734,6 +856,12 @@ private struct BoardDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        if category == .files {
+            let providers = info.itemProviders(for: [UTType.fileURL.identifier])
+            guard !providers.isEmpty else { return false }
+            model.importProviders(providers, to: .files)
+            return true
+        }
         guard internalImageProvider(from: info) == nil else {
             return false
         }
@@ -749,9 +877,42 @@ private struct BoardDropDelegate: DropDelegate {
         return true
     }
 
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        validateDrop(info: info) ? DropProposal(operation: .copy) : nil
+    }
+
     private func internalImageProvider(from info: DropInfo) -> NSItemProvider? {
         info.itemProviders(for: [UTType.fileURL.identifier])
             .first(where: { model.draggedImageID(from: $0) != nil })
+    }
+}
+
+private struct FileStationDropDelegate: DropDelegate {
+    let model: BoardModel
+    @Binding var targetedCategory: BoardCategory?
+
+    func validateDrop(info: DropInfo) -> Bool {
+        !info.itemProviders(for: [UTType.fileURL.identifier]).isEmpty
+    }
+
+    func dropEntered(info: DropInfo) {
+        if validateDrop(info: info) { targetedCategory = .files }
+    }
+
+    func dropExited(info: DropInfo) {
+        if targetedCategory == .files { targetedCategory = nil }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        validateDrop(info: info) ? DropProposal(operation: .copy) : nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        targetedCategory = nil
+        let providers = info.itemProviders(for: [UTType.fileURL.identifier])
+        guard !providers.isEmpty else { return false }
+        model.importProviders(providers, to: .files)
+        return true
     }
 }
 
