@@ -11,6 +11,7 @@ private struct TestFailure: Error, CustomStringConvertible {
 enum MacCoreTests {
     static func main() throws {
         try testNewContentStaysBelowPinsAndPersists()
+        try testClearPreservesPinnedContentAndFiles()
         try testMovePreservesPinnedPartition()
         try testFourAssetCategoriesRemainDistinct()
         try testStoreReadsWindowsCompatibleLegacyJSON()
@@ -35,7 +36,7 @@ enum MacCoreTests {
         try testFileImportCopiesAndPersistsOriginalBytes()
         try testFileStoreRejectsUnsafePaths()
         try testFileImportRollsBackFailedBoardSave()
-        print("macOS core tests passed (25 tests)")
+        print("macOS core tests passed (26 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -432,6 +433,61 @@ enum MacCoreTests {
             .orderedItems(in: .inbox)
         try check(reloaded.map(\.id) == items.map(\.id), "persisted item order changed")
         try check(reloaded.map(\.isPinned) == [true, false], "persisted pin state changed")
+    }
+
+    private static func testClearPreservesPinnedContentAndFiles() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory.appendingPathComponent("data")))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        model.addText("保留置顶文字", to: .inbox)
+        let textID = try require(model.items.first?.id, "missing text")
+        model.togglePinned(textID)
+        model.addText("删除普通文字", to: .inbox)
+        model.addText("其他分类", to: .prompt)
+        let otherID = try require(model.orderedItems(in: .prompt).first?.id, "missing other category")
+        let image = NSImage(size: NSSize(width: 8, height: 8), flipped: false) { rect in
+            NSColor.systemGreen.setFill()
+            rect.fill()
+            return true
+        }
+        model.addImages([image, image], to: .inbox)
+        let images = model.items.filter { $0.kind == .image }
+        try check(images.count == 2, "missing image fixtures")
+        let pinnedImageURL = try require(model.imageURL(for: images[0]), "missing pinned image URL")
+        let removedImageURL = try require(model.imageURL(for: images[1]), "missing normal image URL")
+        model.togglePinned(images[0].id)
+        model.selectCategory(.inbox)
+        model.clearActiveCategory()
+        let survivors = Set([textID, images[0].id, otherID])
+        try check(Set(store.loadBoard().map(\.id)) == survivors, "clear deleted a pin or another category")
+        try check(FileManager.default.fileExists(atPath: pinnedImageURL.path), "clear deleted pinned image bytes")
+        try check(!FileManager.default.fileExists(atPath: removedImageURL.path), "clear retained unpinned image bytes")
+        model.clearActiveCategory()
+        try check(Set(store.loadBoard().map(\.id)) == survivors, "all-pinned clear was not a no-op")
+
+        let original = directory.appendingPathComponent("original.bin")
+        try Data([1, 2, 3]).write(to: original)
+        model.importFiles([original, original])
+        try waitUntil { !model.isImportingFiles }
+        let files = model.orderedItems(in: .files)
+        try check(files.count == 2, "missing file fixtures")
+        let pinnedFileURL = try require(model.fileURL(for: files[0]), "missing pinned file URL")
+        let removedFileURL = try require(model.fileURL(for: files[1]), "missing normal file URL")
+        model.togglePinned(files[0].id)
+        model.selectCategory(.files)
+        model.clearActiveCategory()
+        let reloaded = BoardModel(store: store, monitorsClipboard: false)
+        try check(reloaded.orderedItems(in: .files).map(\.id) == [files[0].id], "pinned file lost after reload")
+        try check(FileManager.default.fileExists(atPath: pinnedFileURL.path), "clear deleted pinned file bytes")
+        try check(!FileManager.default.fileExists(atPath: removedFileURL.path), "clear retained normal file bytes")
+        try check(FileManager.default.fileExists(atPath: original.path), "clear deleted original")
+        reloaded.delete(files[0].id)
+        try check(reloaded.orderedItems(in: .files).isEmpty && !FileManager.default.fileExists(atPath: pinnedFileURL.path),
+                  "explicit deletion of a pinned item stopped working")
+        reloaded.selectCategory(.files)
+        reloaded.clearActiveCategory()
+        try check(Set(store.loadBoard().map(\.id)) == survivors, "empty clear changed other categories")
     }
 
     private static func testMovePreservesPinnedPartition() throws {

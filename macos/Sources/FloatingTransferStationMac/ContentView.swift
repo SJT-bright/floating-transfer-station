@@ -290,13 +290,13 @@ struct ContentView: View {
         } message: {
             Text("复制内容始终进入待分类，你可以主动拖动图片到新分类。")
         }
-        .alert("清空当前分类？", isPresented: $confirmsClear) {
+        .alert("清空未置顶内容？", isPresented: $confirmsClear) {
             Button("取消", role: .cancel) {}
-            Button("清空", role: .destructive) {
+            Button("清空未置顶内容", role: .destructive) {
                 model.clearActiveCategory()
             }
         } message: {
-            Text("这会删除当前分类里的内容及应用管理的副本，不会删除导入前的原文件。")
+            Text("只删除当前分类中未置顶的内容及站内副本。置顶内容会保留，导入前的原文件不受影响。")
         }
     }
 
@@ -384,8 +384,8 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "trash")
             }
-            .help("清空当前分类")
-            .disabled(isSearching || model.orderedItems(in: model.activeCategory).isEmpty)
+            .help("清空当前分类的未置顶内容（保留置顶）")
+            .disabled(isSearching || !model.orderedItems(in: model.activeCategory).contains { !$0.isPinned })
         }
         .buttonStyle(StationButtonStyle())
         .padding(.horizontal, 10)

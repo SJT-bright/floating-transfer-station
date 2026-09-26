@@ -285,13 +285,13 @@ final class BoardModel: ObservableObject {
 
     func clearActiveCategory() {
         let category = activeCategory
-        let removed = orderedItems(in: category)
+        let removed = orderedItems(in: category).filter { !$0.isPinned }
         guard !removed.isEmpty else {
             return
         }
 
         if persistMutation(failureMessage: "清空未保存，请重试。", {
-            items.removeAll { $0.category == category }
+            items.removeAll { $0.category == category && !$0.isPinned }
         }) {
             removed.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
             removed.forEach { _ = store.deleteManagedFile(relativePath: $0.fileRelativePath) }
