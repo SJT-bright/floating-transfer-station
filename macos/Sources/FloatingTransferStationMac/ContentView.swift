@@ -23,7 +23,7 @@ private struct StationMaterial: NSViewRepresentable {
             if #available(macOS 26.0, *) {
                 let effect = NSGlassEffectView()
                 effect.style = .clear
-                effect.cornerRadius = 12
+                effect.cornerRadius = 16
                 glass = effect
             } else {
                 let effect = NSVisualEffectView()
@@ -37,7 +37,7 @@ private struct StationMaterial: NSViewRepresentable {
             frost.blendingMode = .behindWindow
             frost.state = .active
             wantsLayer = true
-            layer?.cornerRadius = 12
+            layer?.cornerRadius = 16
             layer?.masksToBounds = true
             for effect in [frost, glass] {
                 effect.frame = bounds
@@ -96,6 +96,7 @@ private struct StationHoverTracker: NSViewRepresentable {
 private struct StationHoverEffect: ViewModifier {
     var isPressed = false
     var isActive = false
+    var cornerRadius: CGFloat = 11
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
@@ -104,13 +105,13 @@ private struct StationHoverEffect: ViewModifier {
         let highlighted = (isHovered || isActive) && isEnabled
         content
             .background {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(Color.accentColor.opacity(highlighted ? 0.22 : 0))
                     .padding(-3)
                     .allowsHitTesting(false)
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(highlighted ? 0.45 : 0), lineWidth: 0.8)
                     .padding(-3)
                     .allowsHitTesting(false)
@@ -128,11 +129,12 @@ private struct StationHoverEffect: ViewModifier {
 }
 
 private struct StationButtonStyle: ButtonStyle {
+    var cornerRadius: CGFloat = 11
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .modifier(StationHoverEffect(isPressed: configuration.isPressed))
+            .modifier(StationHoverEffect(isPressed: configuration.isPressed, cornerRadius: cornerRadius))
             .opacity(isEnabled ? 1 : 0.4)
     }
 }
@@ -172,7 +174,7 @@ struct ContentView: View {
             } else {
                 StationMaterial(frost: appearance.frostIntensity, glass: appearance.glassIntensity)
                 Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity)
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(LinearGradient(colors: [.white.opacity(0.75), .white.opacity(0.08),
                                                          .white.opacity(0.35)],
                                                  startPoint: .topLeading, endPoint: .bottomTrailing),
@@ -301,7 +303,7 @@ struct ContentView: View {
     }
 
     private var collapsedHandle: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 5) {
             Image(systemName: "tray.full.fill")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
@@ -459,7 +461,7 @@ struct ContentView: View {
             .padding(28)
         } else {
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 6) {
                     ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
                         if index > 0,
                            visibleItems[index - 1].isPinned,
@@ -478,7 +480,7 @@ struct ContentView: View {
                         ItemCard(model: model, item: item, showsCategory: isSearching)
                     }
                 }
-                .padding(9)
+                .padding(7)
             }
         }
     }
@@ -501,7 +503,7 @@ struct ContentView: View {
     }
 
     private var categoryRail: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             HStack(spacing: 4) {
                 Button {
                     newCategoryName = ""
@@ -518,7 +520,7 @@ struct ContentView: View {
                 Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(textColor.opacity(0.85))
-                    .frame(width: 32, height: 32)
+                    .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
                     .modifier(StationHoverEffect(isActive: isDraggingPanel))
                     .help("按住拖动窗口")
@@ -533,18 +535,18 @@ struct ContentView: View {
             Divider()
             fileStationButton
         }
-        .padding(8)
+        .padding(6)
         .frame(width: PanelGeometry.railWidth)
     }
 
     private var categoryButtons: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             ForEach(model.categories.filter { $0 != .files }) { category in
                 Button {
                     searchQuery = ""
                     model.selectCategory(category)
                 } label: {
-                    VStack(spacing: 5) {
+                    VStack(spacing: 4) {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: icon(for: category))
                                 .font(.system(size: 17, weight: .medium))
@@ -564,12 +566,12 @@ struct ContentView: View {
                             .foregroundStyle(textColor.opacity(0.75))
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .contentShape(Rectangle())
+                    .padding(.vertical, 5)
+                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 }
-                .buttonStyle(StationButtonStyle())
+                .buttonStyle(StationButtonStyle(cornerRadius: 18))
                 .background(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(
                             dropTargetCategory == category
                                 ? Color.accentColor.opacity(0.42)
@@ -579,7 +581,7 @@ struct ContentView: View {
                         )
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .stroke(
                             dropTargetCategory == category
                                 ? Color.accentColor.opacity(0.9)
@@ -613,9 +615,9 @@ struct ContentView: View {
             searchQuery = ""
             model.selectCategory(.files)
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 Image(systemName: "tray.and.arrow.down")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 13.6, weight: .medium))
                 Text("文件中转站")
                     .font(.system(size: 10))
                     .lineLimit(2)
@@ -625,15 +627,15 @@ struct ContentView: View {
                     .foregroundStyle(textColor.opacity(0.75))
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
+            .padding(.vertical, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .buttonStyle(StationButtonStyle())
-        .background(RoundedRectangle(cornerRadius: 10).fill(
+        .buttonStyle(StationButtonStyle(cornerRadius: 18))
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(
             dropTargetCategory == .files ? Color.accentColor.opacity(0.42)
                 : model.activeCategory == .files ? Color.accentColor.opacity(0.16) : .clear
         ))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(
             dropTargetCategory == .files ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
         ))
         .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
@@ -941,7 +943,7 @@ private struct ItemCard: View {
                     .foregroundStyle(textColor.opacity(0.75))
             }
         }
-        .padding(9)
+        .padding(7)
         .foregroundStyle(textColor)
         .background(
             RoundedRectangle(cornerRadius: 12)

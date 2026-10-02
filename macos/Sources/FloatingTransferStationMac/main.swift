@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var launchAtLoginMenuItem: NSMenuItem?
     private var collapseWorkItem: DispatchWorkItem?
     private let collapseMotion = PanelCollapseMotion()
-    private var expandedSize = NSSize(width: 408, height: 476)
+    private var expandedSize = PanelGeometry.expandedMaximumSize
     private var expandedTop = 80.0
     private var dragStartFrame: NSRect?
     private var dragStartMouse: NSPoint?
@@ -56,10 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.minSize = PanelGeometry.collapsedSize
-        panel.maxSize = NSSize(width: min(408, visibleFrame.width), height: min(476, visibleFrame.height))
+        panel.maxSize = NSSize(width: min(PanelGeometry.expandedMaximumSize.width, visibleFrame.width), height: min(PanelGeometry.expandedMaximumSize.height, visibleFrame.height))
         if !docked {
             panel.styleMask.insert(.resizable)
-            panel.minSize = NSSize(width: min(340, visibleFrame.width), height: min(400, visibleFrame.height))
+            panel.minSize = NSSize(width: min(PanelGeometry.expandedMinimumSize.width, visibleFrame.width), height: min(PanelGeometry.expandedMinimumSize.height, visibleFrame.height))
         }
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
@@ -266,13 +266,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ? expandedFrame
             : PanelGeometry.collapsedFrame(around: expandedFrame, in: visibleFrame)
 
-        // Never lay out a full board at the 48-point handle width, nor animate
+        // Never lay out a full board at the narrow handle width, nor animate
         // through intermediate widths (long text reflows on every frame).
         if !expanded {
             presentation.setExpanded(false)
         }
         panel.minSize = expanded
-            ? NSSize(width: min(340, visibleFrame.width), height: min(400, visibleFrame.height))
+            ? NSSize(width: min(PanelGeometry.expandedMinimumSize.width, visibleFrame.width), height: min(PanelGeometry.expandedMinimumSize.height, visibleFrame.height))
             : PanelGeometry.collapsedSize
         if expanded {
             panel.styleMask.insert(.resizable)

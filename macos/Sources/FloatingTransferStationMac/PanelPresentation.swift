@@ -168,18 +168,20 @@ struct PanelGeometry {
     static func isDocked(_ frame: NSRect, in screen: NSRect) -> Bool {
         abs(frame.minX - screen.minX) < 1 || abs(frame.maxX - screen.maxX) < 1
     }
-    static let railWidth = 70.0
-    static let collapsedSize = NSSize(width: 48, height: 140)
+    static let railWidth = 64.0
+    static let collapsedSize = NSSize(width: 44, height: 112)
+    static let expandedMinimumSize = NSSize(width: 332, height: 376)
+    static let expandedMaximumSize = NSSize(width: 400, height: 448)
 
     static func expandedFrame(
         settings: WindowSettings,
         in visibleFrame: NSRect
     ) -> NSRect {
-        let maximumWidth = max(0, min(408, visibleFrame.width))
-        let minimumWidth = min(340, maximumWidth)
+        let maximumWidth = max(0, min(expandedMaximumSize.width, visibleFrame.width))
+        let minimumWidth = min(expandedMinimumSize.width, maximumWidth)
         let width = min(max(settings.panelWidth + railWidth, minimumWidth), maximumWidth)
-        let maximumHeight = max(0, min(476, visibleFrame.height))
-        let minimumHeight = min(400, maximumHeight)
+        let maximumHeight = max(0, min(expandedMaximumSize.height, visibleFrame.height))
+        let minimumHeight = min(expandedMinimumSize.height, maximumHeight)
         let height = min(max(settings.windowHeight, minimumHeight), maximumHeight)
         let top = min(max(settings.top, 0), max(0, visibleFrame.height - height))
         var frame = expandedFrame(
@@ -198,8 +200,8 @@ struct PanelGeometry {
         top: Double,
         in visibleFrame: NSRect
     ) -> NSRect {
-        let width = min(max(size.width, min(340, visibleFrame.width)), min(408, visibleFrame.width))
-        let height = min(max(size.height, min(400, visibleFrame.height)), min(476, visibleFrame.height))
+        let width = min(max(size.width, min(expandedMinimumSize.width, visibleFrame.width)), min(expandedMaximumSize.width, visibleFrame.width))
+        let height = min(max(size.height, min(expandedMinimumSize.height, visibleFrame.height)), min(expandedMaximumSize.height, visibleFrame.height))
         let clampedTop = min(max(top, 0), max(0, visibleFrame.height - height))
         return NSRect(
             x: visibleFrame.maxX - width,
