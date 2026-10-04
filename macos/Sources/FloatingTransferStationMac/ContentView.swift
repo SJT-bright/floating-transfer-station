@@ -3,51 +3,82 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private struct StationMaterial: NSViewRepresentable {
-    var frost: Double
     var glass: Double
+    var cornerRadius: CGFloat
 
-    func makeNSView(context: Context) -> MaterialView { MaterialView() }
+    func makeNSView(context: Context) -> MaterialView { MaterialView(cornerRadius: cornerRadius) }
 
     func updateNSView(_ view: MaterialView, context: Context) {
-        view.frost.alphaValue = frost
-        view.frost.isHidden = frost == 0
         view.glass.alphaValue = glass
         view.glass.isHidden = glass == 0
+        view.layer?.cornerRadius = cornerRadius
+        if #available(macOS 26.0, *), let effect = view.glass as? NSGlassEffectView {
+            effect.cornerRadius = cornerRadius
+        }
     }
 
     final class MaterialView: NSView {
-        let frost = NSVisualEffectView()
         let glass: NSView
 
-        override init(frame frameRect: NSRect) {
+        init(cornerRadius: CGFloat) {
             if #available(macOS 26.0, *) {
                 let effect = NSGlassEffectView()
                 effect.style = .clear
-                effect.cornerRadius = 16
+                effect.cornerRadius = cornerRadius
+                effect.contentView = NSView()
                 glass = effect
             } else {
-                let effect = NSVisualEffectView()
-                effect.material = .hudWindow
-                effect.blendingMode = .behindWindow
-                effect.state = .active
-                glass = effect
+                // Older systems keep the transparent lens, never a frosted fallback.
+                glass = NSView()
             }
-            super.init(frame: frameRect)
-            frost.material = .underWindowBackground
-            frost.blendingMode = .behindWindow
-            frost.state = .active
+            super.init(frame: .zero)
             wantsLayer = true
-            layer?.cornerRadius = 16
+            layer?.cornerRadius = cornerRadius
             layer?.masksToBounds = true
-            for effect in [frost, glass] {
-                effect.frame = bounds
-                effect.autoresizingMask = [.width, .height]
-                addSubview(effect)
-            }
+            glass.frame = bounds
+            glass.autoresizingMask = [.width, .height]
+            addSubview(glass)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
+// Lightweight lens edges share the panel's single native glass pass.
+private struct StationGlassLens: View {
+    var cornerRadius: CGFloat
+    var strength: Double
+    var tint: Color = .clear
+    var tintOpacity: Double = 0
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .fill(tint.opacity(tintOpacity))
+            .overlay {
+                shape.fill(LinearGradient(stops: [
+                    .init(color: .white.opacity(0.12 * strength), location: 0),
+                    .init(color: .white.opacity(0.02 * strength), location: 0.20),
+                    .init(color: .clear, location: 0.55),
+                    .init(color: .black.opacity(0.06 * strength), location: 1)
+                ], startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+            .overlay {
+                shape.strokeBorder(LinearGradient(stops: [
+                    .init(color: .white.opacity(0.85 * strength), location: 0),
+                    .init(color: .white.opacity(0.32 * strength), location: 0.25),
+                    .init(color: .black.opacity(0.18 * strength), location: 0.55),
+                    .init(color: .white.opacity(0.55 * strength), location: 1)
+                ], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
+            }
+            .overlay {
+                shape.inset(by: 1.5)
+                    .stroke(LinearGradient(colors: [.black.opacity(0.14 * strength), .clear,
+                                                    .white.opacity(0.20 * strength)],
+                                           startPoint: .top, endPoint: .bottom), lineWidth: 1)
+            }
+            .allowsHitTesting(false)
     }
 }
 
@@ -172,16 +203,12 @@ struct ContentView: View {
             if reduceTransparency {
                 Color(nsColor: .windowBackgroundColor)
             } else {
-                StationMaterial(frost: appearance.frostIntensity, glass: appearance.glassIntensity)
+                StationMaterial(glass: appearance.glassIntensity, cornerRadius: 22)
                 Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity)
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(LinearGradient(colors: [.white.opacity(0.75), .white.opacity(0.08),
-                                                         .white.opacity(0.35)],
-                                                 startPoint: .topLeading, endPoint: .bottomTrailing),
-                                  lineWidth: 1)
-                    .opacity(appearance.glassIntensity)
+                StationGlassLens(cornerRadius: 22, strength: appearance.glassIntensity)
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .allowsHitTesting(false)
     }
 
@@ -254,7 +281,9 @@ struct ContentView: View {
                 }
                 .font(.system(size: 12))
                 .padding(8)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+                .background(StationGlassLens(cornerRadius: 13,
+                    strength: reduceTransparency ? 0 : appearance.glassIntensity,
+                    tint: .black, tintOpacity: 0.08))
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
                 Divider()
@@ -392,16 +421,6 @@ struct ContentView: View {
         .buttonStyle(StationButtonStyle())
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity * 0.2),
-                    Color.clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
     }
 
     private func chooseFiles() {
@@ -571,14 +590,12 @@ struct ContentView: View {
                 }
                 .buttonStyle(StationButtonStyle(cornerRadius: 18))
                 .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(
-                            dropTargetCategory == category
-                                ? Color.accentColor.opacity(0.42)
-                                : model.activeCategory == category
-                                    ? Color.accentColor.opacity(0.16)
-                                    : Color.clear
-                        )
+                    StationGlassLens(cornerRadius: 18,
+                        strength: reduceTransparency ? 0 : appearance.glassIntensity,
+                        tint: dropTargetCategory == category || model.activeCategory == category
+                            ? .accentColor : .black,
+                        tintOpacity: dropTargetCategory == category ? 0.42
+                            : model.activeCategory == category ? 0.26 : 0.06)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -631,10 +648,11 @@ struct ContentView: View {
             .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
         .buttonStyle(StationButtonStyle(cornerRadius: 18))
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(
-            dropTargetCategory == .files ? Color.accentColor.opacity(0.42)
-                : model.activeCategory == .files ? Color.accentColor.opacity(0.16) : .clear
-        ))
+        .background(StationGlassLens(cornerRadius: 18,
+            strength: reduceTransparency ? 0 : appearance.glassIntensity,
+            tint: dropTargetCategory == .files || model.activeCategory == .files ? .accentColor : .black,
+            tintOpacity: dropTargetCategory == .files ? 0.42
+                : model.activeCategory == .files ? 0.26 : 0.06))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(
             dropTargetCategory == .files ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
         ))
@@ -703,18 +721,20 @@ private struct AppearanceEditor: View {
             control("背景不透明度", key: \.backgroundOpacity, ends: "左侧透明 · 右侧实色")
             Divider()
             Group {
-                control("磨砂强度", key: \.frostIntensity, ends: "关闭 · 背景磨砂混合增强")
-                control("液态玻璃强度", key: \.glassIntensity, ends: "关闭 · 玻璃透光与边缘高光增强")
+                control("液态玻璃强度", key: \.glassIntensity, ends: "左侧关闭 · 右侧折射与弧面亮边增强")
             }
             .disabled(reduceTransparency)
             if reduceTransparency {
                 Text("系统已开启降低透明度，材质效果暂不显示。")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("背景不透明度越低，材质越明显。macOS 26 使用原生液态玻璃，旧系统使用兼容材质。")
+                Text("清透玻璃，不叠加磨砂。降低背景不透明度可看见背后的颜色；macOS 26 支持原生折射，旧系统保留透明亮边。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Text("实时生效并自动保存，图片保持原样。").font(.caption).foregroundStyle(.secondary)
+            Button("使用液态玻璃预设") { model.updateAppearance(.liquidGlass) }
+                .buttonStyle(.bordered)
+                .modifier(StationHoverEffect())
             Button("恢复系统默认") { model.updateAppearance(nil) }
                 .buttonStyle(.bordered)
                 .modifier(StationHoverEffect())
@@ -736,6 +756,7 @@ private struct ItemCard: View {
     @FocusState private var isEditingName: Bool
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var appearance: PanelAppearance {
         model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
@@ -946,15 +967,17 @@ private struct ItemCard: View {
         .padding(7)
         .foregroundStyle(textColor)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity * 0.45))
+            StationGlassLens(cornerRadius: 16,
+                strength: reduceTransparency ? 0 : appearance.glassIntensity,
+                tint: Color(white: appearance.backgroundBrightness),
+                tintOpacity: appearance.backgroundOpacity * 0.20)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(
                     item.isPinned
                         ? Color.accentColor.opacity(0.55)
-                        : Color.white.opacity(colorScheme == .dark ? 0.14 : 0.72)
+                        : Color.clear
                 )
         )
         .shadow(
@@ -963,7 +986,7 @@ private struct ItemCard: View {
             x: 0,
             y: 4
         )
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .contextMenu {
             Button(item.isPinned ? "取消置顶" : "置顶") {
                 model.togglePinned(item.id)

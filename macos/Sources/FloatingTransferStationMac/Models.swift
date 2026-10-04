@@ -174,8 +174,13 @@ struct PanelAppearance: Codable, Equatable {
 
     static func defaults(isDark: Bool) -> Self {
         Self(textBrightness: isDark ? 1 : 0, textOpacity: 0.95,
-             backgroundBrightness: isDark ? 0 : 1, backgroundOpacity: 0.34)
+             backgroundBrightness: isDark ? 0 : 1, backgroundOpacity: 0.10,
+             glassIntensity: 0.9)
     }
+
+    static let liquidGlass = Self(textBrightness: 1, textOpacity: 1,
+                                  backgroundBrightness: 0, backgroundOpacity: 0.18,
+                                  glassIntensity: 1)
 
     var normalized: Self {
         func clamp(_ value: Double, minimum: Double = 0) -> Double {
