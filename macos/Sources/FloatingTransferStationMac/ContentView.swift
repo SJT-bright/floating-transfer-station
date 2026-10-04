@@ -42,6 +42,11 @@ private struct StationMaterial: NSViewRepresentable {
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func layout() {
+            super.layout()
+            if glass.frame != bounds { glass.frame = bounds }
+        }
     }
 }
 
@@ -128,6 +133,7 @@ private struct StationHoverEffect: ViewModifier {
     var isPressed = false
     var isActive = false
     var cornerRadius: CGFloat = 11
+    var highlightPadding: CGFloat = 3
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
@@ -138,13 +144,13 @@ private struct StationHoverEffect: ViewModifier {
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .fill(Color.accentColor.opacity(highlighted ? 0.22 : 0))
-                    .padding(-3)
+                    .padding(-highlightPadding)
                     .allowsHitTesting(false)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(highlighted ? 0.45 : 0), lineWidth: 0.8)
-                    .padding(-3)
+                    .padding(-highlightPadding)
                     .allowsHitTesting(false)
             }
             .shadow(color: .black.opacity(highlighted ? 0.22 : 0), radius: highlighted ? 5 : 0, y: highlighted ? 3 : 0)
@@ -161,11 +167,13 @@ private struct StationHoverEffect: ViewModifier {
 
 private struct StationButtonStyle: ButtonStyle {
     var cornerRadius: CGFloat = 11
+    var highlightPadding: CGFloat = 3
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .modifier(StationHoverEffect(isPressed: configuration.isPressed, cornerRadius: cornerRadius))
+            .modifier(StationHoverEffect(isPressed: configuration.isPressed,
+                cornerRadius: cornerRadius, highlightPadding: highlightPadding))
             .opacity(isEnabled ? 1 : 0.4)
     }
 }
@@ -203,12 +211,12 @@ struct ContentView: View {
             if reduceTransparency {
                 Color(nsColor: .windowBackgroundColor)
             } else {
-                StationMaterial(glass: appearance.glassIntensity, cornerRadius: 22)
+                StationMaterial(glass: appearance.glassIntensity, cornerRadius: 16)
                 Color(white: appearance.backgroundBrightness).opacity(appearance.backgroundOpacity)
-                StationGlassLens(cornerRadius: 22, strength: appearance.glassIntensity)
+                StationGlassLens(cornerRadius: 16, strength: appearance.glassIntensity)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .allowsHitTesting(false)
     }
 
@@ -586,26 +594,22 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 5)
-                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .background(
+                        StationGlassLens(cornerRadius: 8,
+                            strength: reduceTransparency || (dropTargetCategory != category && model.activeCategory != category)
+                                ? 0 : appearance.glassIntensity,
+                            tint: .accentColor,
+                            tintOpacity: dropTargetCategory == category ? 0.42
+                                : model.activeCategory == category ? 0.26 : 0)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(dropTargetCategory == category ? Color.accentColor.opacity(0.9) : .clear,
+                                    lineWidth: 2)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(StationButtonStyle(cornerRadius: 18))
-                .background(
-                    StationGlassLens(cornerRadius: 18,
-                        strength: reduceTransparency ? 0 : appearance.glassIntensity,
-                        tint: dropTargetCategory == category || model.activeCategory == category
-                            ? .accentColor : .black,
-                        tintOpacity: dropTargetCategory == category ? 0.42
-                            : model.activeCategory == category ? 0.26 : 0.06)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(
-                            dropTargetCategory == category
-                                ? Color.accentColor.opacity(0.9)
-                                : Color.clear,
-                            lineWidth: 2
-                        )
-                )
+                .buttonStyle(StationButtonStyle(cornerRadius: 8, highlightPadding: 0))
                 .scaleEffect(dropTargetCategory == category ? 1.03 : 1)
                 .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
                 .onDrop(
@@ -625,6 +629,7 @@ struct ContentView: View {
                 }
             }
         }
+        .padding(.vertical, 4)
     }
 
     private var fileStationButton: some View {
@@ -645,17 +650,18 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .background(StationGlassLens(cornerRadius: 8,
+                strength: reduceTransparency || (dropTargetCategory != .files && model.activeCategory != .files)
+                    ? 0 : appearance.glassIntensity,
+                tint: .accentColor,
+                tintOpacity: dropTargetCategory == .files ? 0.42
+                    : model.activeCategory == .files ? 0.26 : 0))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(
+                dropTargetCategory == .files ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
+            ))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(StationButtonStyle(cornerRadius: 18))
-        .background(StationGlassLens(cornerRadius: 18,
-            strength: reduceTransparency ? 0 : appearance.glassIntensity,
-            tint: dropTargetCategory == .files || model.activeCategory == .files ? .accentColor : .black,
-            tintOpacity: dropTargetCategory == .files ? 0.42
-                : model.activeCategory == .files ? 0.26 : 0.06))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(
-            dropTargetCategory == .files ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
-        ))
+        .buttonStyle(StationButtonStyle(cornerRadius: 8, highlightPadding: 0))
         .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
         .accessibilityLabel("文件中转站")
         .help("导入或拖入文件，保留原文件")
