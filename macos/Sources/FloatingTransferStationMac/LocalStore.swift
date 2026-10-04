@@ -105,8 +105,14 @@ final class LocalStore {
     }
 
     func storeImage(_ image: NSImage, id: UUID = UUID()) throws -> String {
-        guard let tiff = image.tiffRepresentation,
-              let representation = NSBitmapImageRep(data: tiff),
+        guard let tiff = image.tiffRepresentation else {
+            throw CocoaError(.fileWriteInapplicableStringEncoding)
+        }
+        return try storeImageData(tiff, id: id)
+    }
+
+    func storeImageData(_ imageData: Data, id: UUID = UUID()) throws -> String {
+        guard let representation = NSBitmapImageRep(data: imageData),
               let png = representation.representation(using: .png, properties: [:])
         else {
             throw CocoaError(.fileWriteInapplicableStringEncoding)
@@ -174,8 +180,7 @@ final class LocalStore {
         let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
         guard components.count == 3, components[0] == "files",
               UUID(uuidString: String(components[1])) != nil,
-              !components[2].isEmpty, components[2] != ".", components[2] != "..",
-              !relativePath.contains("\\") else { return nil }
+              !components[2].isEmpty, components[2] != ".", components[2] != ".." else { return nil }
         let candidate = paths.dataDirectory.appendingPathComponent(relativePath).standardizedFileURL
         let expected = paths.dataDirectory.resolvingSymlinksInPath().appendingPathComponent(relativePath).standardizedFileURL
         guard candidate.resolvingSymlinksInPath() == expected else { return nil }
@@ -338,7 +343,7 @@ final class LocalStore {
             var container = encoder.singleValueContainer()
             try container.encode(formatter.string(from: date))
         }
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(value)
     }
 

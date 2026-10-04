@@ -38,6 +38,7 @@ public sealed class LocalStore : IBoardStore
     private readonly TimeProvider _timeProvider;
     private readonly SemaphoreSlim _boardWriteGate = new(1, 1);
     private readonly SemaphoreSlim _settingsWriteGate = new(1, 1);
+    private volatile bool _boardWritesBlocked;
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -57,15 +58,17 @@ public sealed class LocalStore : IBoardStore
     }
 
     public string ImagesDirectory => _paths.ImagesDirectory;
+    public string? BoardLoadWarning { get; private set; }
 
     public async Task<BoardSnapshot> LoadBoardAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await LoadWithBackupAsync(
-            _paths.BoardFile,
-            () => new BoardSnapshot(),
-            cancellationToken);
+        _boardWritesBlocked = false;
+        BoardLoadWarning = null;
+        var snapshot = await LoadBoardSnapshotAsync(cancellationToken).ConfigureAwait(false);
         if (snapshot.SchemaVersion != BoardSnapshot.CurrentSchemaVersion)
         {
+            _boardWritesBlocked = true;
+            BoardLoadWarning ??= "看板数据版本不受当前应用支持；原文件已保护，请使用兼容版本打开。";
             return new BoardSnapshot();
         }
 
@@ -118,6 +121,34 @@ public sealed class LocalStore : IBoardStore
         await _boardWriteGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (_boardWritesBlocked)
+            {
+                throw new IOException(BoardLoadWarning ?? "看板处于只读保护状态，未写入新内容。");
+            }
+
+            if (File.Exists(_paths.BoardFile))
+            {
+                BoardSnapshot existing;
+                try
+                {
+                    existing = await ReadBoardSnapshotAsync(_paths.BoardFile, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (JsonException)
+                {
+                    _boardWritesBlocked = true;
+                    BoardLoadWarning = "看板文件无法读取，已停止写入以保护原数据。";
+                    throw new IOException(BoardLoadWarning);
+                }
+
+                if (existing.SchemaVersion != BoardSnapshot.CurrentSchemaVersion)
+                {
+                    _boardWritesBlocked = true;
+                    BoardLoadWarning = "看板数据版本不受当前应用支持；原文件已保护，未覆盖。";
+                    throw new IOException(BoardLoadWarning);
+                }
+            }
+
             await _writer.WriteAsync(
                 _paths.BoardFile,
                 JsonSerializer.Serialize(snapshot, _jsonOptions),
@@ -127,6 +158,86 @@ public sealed class LocalStore : IBoardStore
         {
             _boardWriteGate.Release();
         }
+    }
+
+    private async Task<BoardSnapshot> LoadBoardSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var backupPath = _paths.BoardFile + ".bak";
+        var primaryWasCorrupt = false;
+        if (File.Exists(_paths.BoardFile))
+        {
+            try
+            {
+                var primary = await ReadBoardSnapshotAsync(_paths.BoardFile, cancellationToken)
+                    .ConfigureAwait(false);
+                if (primary.SchemaVersion != BoardSnapshot.CurrentSchemaVersion)
+                {
+                    _boardWritesBlocked = true;
+                    BoardLoadWarning = "看板由其他版本创建，当前应用不会写入以免覆盖原内容。";
+                    return new BoardSnapshot();
+                }
+                return primary;
+            }
+            catch (JsonException)
+            {
+                PreserveCorruptFile(_paths.BoardFile);
+                primaryWasCorrupt = true;
+            }
+            catch (IOException)
+            {
+                throw;
+            }
+        }
+
+        if (File.Exists(backupPath))
+        {
+            try
+            {
+                var backup = await ReadBoardSnapshotAsync(backupPath, cancellationToken)
+                    .ConfigureAwait(false);
+                if (backup.SchemaVersion != BoardSnapshot.CurrentSchemaVersion)
+                {
+                    _boardWritesBlocked = true;
+                    BoardLoadWarning = "看板备份由其他版本创建；原文件已保护，当前应用不会写入。";
+                    return new BoardSnapshot();
+                }
+                if (primaryWasCorrupt)
+                {
+                    _boardWritesBlocked = true;
+                    BoardLoadWarning = "主看板文件损坏，已从备份读取；当前处于只读保护状态，原文件和备份均已保留。";
+                }
+                return backup;
+            }
+            catch (JsonException)
+            {
+                _boardWritesBlocked = true;
+                BoardLoadWarning = "看板文件或备份无法读取，已停止写入以保护原数据。";
+                return new BoardSnapshot();
+            }
+        }
+
+        if (primaryWasCorrupt)
+        {
+            _boardWritesBlocked = true;
+            BoardLoadWarning = "看板文件损坏且没有可用备份，已停止写入以保护原数据。";
+        }
+        return new BoardSnapshot();
+    }
+
+    private async Task<BoardSnapshot> ReadBoardSnapshotAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var snapshot = await JsonSerializer.DeserializeAsync<BoardSnapshot>(
+            stream,
+            _jsonOptions,
+            cancellationToken).ConfigureAwait(false);
+        if (snapshot is null || snapshot.Items is null)
+        {
+            throw new JsonException("Board snapshot is empty or missing its items collection.");
+        }
+        return snapshot;
     }
 
     public Task<WindowSettings> LoadSettingsAsync(CancellationToken cancellationToken = default) =>

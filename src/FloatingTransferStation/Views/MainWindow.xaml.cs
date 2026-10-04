@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _expandIntentTimer;
     private readonly DispatcherTimer _collapseTimer;
     private readonly DispatcherTimer _statusTimer;
+    private readonly DispatcherTimer _categoryClickTimer;
     private readonly MainWindowViewModel _viewModel;
     private readonly object _pendingOperationsLock = new();
     private readonly HashSet<Task> _pendingOperations = [];
@@ -56,6 +57,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource _windowOperationCancellation = new();
     private IDataObject? _externalDragData;
     private ExternalDropPayload? _externalDragPayload;
+    private CategoryViewModel? _pendingCategoryClick;
     private Point _dragStart;
     private BoardItem? _dragItem;
     private bool _dragThresholdCrossed;
@@ -115,6 +117,11 @@ public partial class MainWindow : Window
         _collapseTimer.Tick += CollapseTimer_Tick;
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
         _statusTimer.Tick += StatusTimer_Tick;
+        _categoryClickTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(SystemParameters.DoubleClickTime + 25)
+        };
+        _categoryClickTimer.Tick += CategoryClickTimer_Tick;
         AddHandler(
             TextCompositionManager.PreviewTextInputStartEvent,
             new TextCompositionEventHandler(CategoryNameEditor_CompositionStartedOrUpdated),

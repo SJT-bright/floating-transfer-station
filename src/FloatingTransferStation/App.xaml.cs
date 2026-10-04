@@ -77,6 +77,10 @@ public partial class App : Application
                 defaultCaptureCategory);
             MainWindow = window;
             window.Show();
+            if (!string.IsNullOrWhiteSpace(store.BoardLoadWarning))
+            {
+                window.ShowStatus(store.BoardLoadWarning);
+            }
         }
         catch (Exception exception)
         {

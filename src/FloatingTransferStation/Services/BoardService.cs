@@ -42,7 +42,8 @@ public sealed record RemovedBoardItems(
 
 public sealed record RemovedBoardCategory(
     BoardCategory Category,
-    IReadOnlyList<BoardItem> Items);
+    IReadOnlyList<BoardItem> Items,
+    IReadOnlyList<BoardItem> OriginalItems);
 
 public sealed class BoardService
 {
@@ -250,11 +251,19 @@ public sealed class BoardService
 
         var targetBefore = _items[targetCategory].ToArray();
         var sourceAfterCrossCategory = remaining.ToArray();
-        var targetAfter = context.OrderedItems
-            .Where(item => item.IsPinned)
-            .Concat(targetBefore.Where(item => item.IsPinned))
-            .Concat(context.OrderedItems.Where(item => !item.IsPinned))
-            .Concat(targetBefore.Where(item => !item.IsPinned))
+        var targetPinned = targetBefore.Where(item => item.IsPinned).ToArray();
+        var targetNormal = targetBefore.Where(item => !item.IsPinned).ToArray();
+        var movingPinned = context.OrderedItems.Where(item => item.IsPinned).ToArray();
+        var movingNormal = context.OrderedItems.Where(item => !item.IsPinned).ToArray();
+        var pinnedInsertion = Math.Clamp(targetIndex, 0, targetPinned.Length);
+        var normalInsertion = Math.Clamp(targetIndex - targetPinned.Length, 0, targetNormal.Length);
+        var targetAfter = targetPinned
+            .Take(pinnedInsertion)
+            .Concat(movingPinned)
+            .Concat(targetPinned.Skip(pinnedInsertion))
+            .Concat(targetNormal.Take(normalInsertion))
+            .Concat(movingNormal)
+            .Concat(targetNormal.Skip(normalInsertion))
             .ToArray();
 
         ReplaceCategory(context.SourceCategory, sourceAfterCrossCategory);
@@ -434,7 +443,7 @@ public sealed class BoardService
         }
     }
 
-    public RemovedBoardCategory RemoveCategory(BoardCategory category)
+    public RemovedBoardCategory RemoveCategory(BoardCategory category, bool preservePinned = false)
     {
         if (!BoardCategoryCatalog.IsDefined(category))
         {
@@ -442,9 +451,15 @@ public sealed class BoardService
         }
 
         var collection = _items[category];
-        var removed = collection.ToArray();
-        collection.Clear();
-        return new RemovedBoardCategory(category, removed);
+        var original = collection.ToArray();
+        var removed = preservePinned
+            ? original.Where(item => !item.IsPinned).ToArray()
+            : original;
+        if (removed.Length > 0)
+        {
+            ReplaceCategory(category, original.Where(item => !removed.Contains(item)));
+        }
+        return new RemovedBoardCategory(category, removed, original);
     }
 
     public void Restore(RemovedBoardCategory removed)
@@ -454,14 +469,7 @@ public sealed class BoardService
             throw new ArgumentOutOfRangeException(nameof(removed));
         }
 
-        var collection = _items[removed.Category];
-        foreach (var item in removed.Items.OrderBy(item => item.Order))
-        {
-            item.Category = removed.Category;
-            collection.Insert(Math.Clamp(item.Order, 0, collection.Count), item);
-        }
-
-        Reindex(removed.Category);
+        ReplaceCategory(removed.Category, removed.OriginalItems);
     }
 
     public void Restore(BoardSnapshot snapshot)

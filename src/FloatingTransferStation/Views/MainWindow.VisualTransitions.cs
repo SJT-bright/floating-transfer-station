@@ -126,12 +126,39 @@ public partial class MainWindow : Window
             return;
         }
 
-        _viewModel.SetDefaultCaptureCategory(category.Category);
+        if (e.ClickCount > 1)
+        {
+            _categoryClickTimer.Stop();
+            _pendingCategoryClick = null;
+            e.Handled = true;
+            return;
+        }
+
+        _pendingCategoryClick = category;
+        _categoryClickTimer.Stop();
+        _categoryClickTimer.Start();
         e.Handled = true;
+    }
+
+    private void CategoryClickTimer_Tick(object? sender, EventArgs e)
+    {
+        _categoryClickTimer.Stop();
+        var category = _pendingCategoryClick;
+        _pendingCategoryClick = null;
+        if (!_isClosing && category is not null)
+        {
+            _viewModel.SetDefaultCaptureCategory(category.Category);
+        }
     }
 
     private void CategoryTab_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton == MouseButton.Left && e.ClickCount >= 2)
+        {
+            _categoryClickTimer.Stop();
+            _pendingCategoryClick = null;
+        }
+
         if (_isClosing ||
             e.ChangedButton != MouseButton.Left ||
             e.ClickCount < 2 ||

@@ -25,42 +25,43 @@ public sealed class ImageNormalizer : IImageNormalizer
         CancellationToken cancellationToken = default) =>
         NormalizeFileCoreAsync(sourcePath, id, rejectMultipleFrames: true, cancellationToken);
 
-    private async Task<StoredImage> NormalizeFileCoreAsync(
+    private Task<StoredImage> NormalizeFileCoreAsync(
         string sourcePath,
         Guid? id,
         bool rejectMultipleFrames,
-        CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
-        var stored = CreateDestination(id ?? Guid.NewGuid());
-        var temporaryPath = stored.AbsolutePath + ".tmp";
-        Directory.CreateDirectory(_imagesDirectory);
-
-        try
+        CancellationToken cancellationToken) =>
+        Task.Run(async () =>
         {
-            using var image = await Image.LoadAsync(sourcePath, cancellationToken);
-            if (rejectMultipleFrames && image.Frames.Count != 1)
-            {
-                throw new InvalidDataException("External image files must contain exactly one frame.");
-            }
+            ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+            var stored = CreateDestination(id ?? Guid.NewGuid());
+            var temporaryPath = stored.AbsolutePath + ".tmp";
+            Directory.CreateDirectory(_imagesDirectory);
 
-            while (image.Frames.Count > 1)
+            try
             {
-                image.Frames.RemoveFrame(1);
-            }
+                using var image = await Image.LoadAsync(sourcePath, cancellationToken).ConfigureAwait(false);
+                if (rejectMultipleFrames && image.Frames.Count != 1)
+                {
+                    throw new InvalidDataException("External image files must contain exactly one frame.");
+                }
 
-            await image.SaveAsPngAsync(temporaryPath, cancellationToken);
-            File.Move(temporaryPath, stored.AbsolutePath, overwrite: false);
-            return stored;
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
+                while (image.Frames.Count > 1)
+                {
+                    image.Frames.RemoveFrame(1);
+                }
+
+                await image.SaveAsPngAsync(temporaryPath, cancellationToken).ConfigureAwait(false);
+                File.Move(temporaryPath, stored.AbsolutePath, overwrite: false);
+                return stored;
             }
-        }
-    }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+        }, cancellationToken);
 
     public Task<StoredImage> NormalizeBitmapAsync(
         BitmapSource bitmap,

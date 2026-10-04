@@ -12,6 +12,8 @@ final class BoardModel: ObservableObject {
     @Published private(set) var isImportingFiles = false
 
     private let store: LocalStore
+    private let boardWritesBlocked: Bool
+    private let boardLoadWarning: String?
     private var clipboardTimer: Timer?
     private var lastPasteboardChangeCount: Int
     private let fileImportQueue = DispatchQueue(label: "com.oiawlm.station.file-import", qos: .userInitiated)
@@ -23,10 +25,20 @@ final class BoardModel: ObservableObject {
         monitorsClipboard: Bool = true
     ) {
         self.store = store
+        let backupURL = URL(fileURLWithPath: store.paths.boardFile.path + ".bak")
+        let hasPrimaryBoard = FileManager.default.fileExists(atPath: store.paths.boardFile.path)
+        let loadWarning = hasPrimaryBoard
+            ? BoardPersistenceSafety.warning(for: store.paths.boardFile)
+            : BoardPersistenceSafety.warning(for: backupURL)
+        boardWritesBlocked = loadWarning != nil
+        boardLoadWarning = loadWarning
         items = Self.normalized(store.loadBoard())
         settings = store.loadSettings()
         activeCategory = .inbox
         lastPasteboardChangeCount = NSPasteboard.general.changeCount
+        if let loadWarning {
+            statusText = loadWarning
+        }
 
         if monitorsClipboard {
             startClipboardMonitoring()
@@ -122,69 +134,55 @@ final class BoardModel: ObservableObject {
     func addImageFiles(_ urls: [URL], to category: BoardCategory? = nil) {
         if category == .files { importFiles(urls); return }
         let target = category ?? defaultCaptureCategory
-        var storedItems: [BoardItem] = []
-
-        do {
-            for url in urls where url.isFileURL {
+        enqueueImageImport(in: target, failureMessage: "拖入图片无法读取，请换一张静态图片重试。") { store, paths in
+            try urls.filter(\.isFileURL).map { url in
                 let id = UUID()
                 let relativePath = try store.storeImageFile(url, id: id)
-                storedItems.append(BoardItem(
+                paths.append(relativePath)
+                return BoardItem(
                     id: id,
                     kind: .image,
                     category: target,
                     order: 0,
                     imageRelativePath: relativePath
-                ))
+                )
             }
-        } catch {
-            storedItems.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
-            showStatus("拖入图片无法读取，请换一张静态图片重试。")
-            return
-        }
-
-        guard !storedItems.isEmpty else {
-            showStatus("没有找到可用的图片。")
-            return
-        }
-
-        if !persistMutation(failureMessage: "图片未保存，请重试。", {
-            insertAtTopOfNormalRegion(storedItems, in: target)
-        }) {
-            storedItems.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
         }
     }
 
     func addImages(_ images: [NSImage], to category: BoardCategory? = nil) {
         guard category != .files else { return }
         let target = category ?? defaultCaptureCategory
-        var storedItems: [BoardItem] = []
-
-        do {
-            for image in images {
+        enqueueImageImport(in: target, failureMessage: "图片无法转换为本地 PNG，请重试。") { store, paths in
+            try images.map { image in
                 let id = UUID()
                 let relativePath = try store.storeImage(image, id: id)
-                storedItems.append(BoardItem(
+                paths.append(relativePath)
+                return BoardItem(
                     id: id,
                     kind: .image,
                     category: target,
                     order: 0,
                     imageRelativePath: relativePath
-                ))
+                )
             }
-        } catch {
-            storedItems.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
-            showStatus("图片无法转换为本地 PNG，请重试。")
-            return
         }
+    }
 
-        guard !storedItems.isEmpty else {
-            return
-        }
-
-        if !persistMutation(failureMessage: "图片未保存，请重试。", {
-            insertAtTopOfNormalRegion(storedItems, in: target)
-        }) {
-            storedItems.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
+    func addImageData(_ imageData: Data, to category: BoardCategory? = nil) {
+        guard category != .files else { return }
+        let target = category ?? defaultCaptureCategory
+        enqueueImageImport(in: target, failureMessage: "图片无法转换为本地 PNG，请重试。") { store, paths in
+            let id = UUID()
+            let relativePath = try store.storeImageData(imageData, id: id)
+            paths.append(relativePath)
+            return [BoardItem(
+                id: id,
+                kind: .image,
+                category: target,
+                order: 0,
+                imageRelativePath: relativePath
+            )]
         }
     }
 
@@ -278,8 +276,11 @@ final class BoardModel: ObservableObject {
         if persistMutation(failureMessage: "删除未保存，请重试。", {
             items.removeAll { $0.id == id }
         }) {
-            _ = store.deleteManagedImage(relativePath: item.imageRelativePath)
-            _ = store.deleteManagedFile(relativePath: item.fileRelativePath)
+            let imageRemoved = item.kind != .image || store.deleteManagedImage(relativePath: item.imageRelativePath)
+            let fileRemoved = item.kind != .file || store.deleteManagedFile(relativePath: item.fileRelativePath)
+            if !imageRemoved || !fileRemoved {
+                showStatus("内容已从看板删除，但站内副本未能清理。")
+            }
         }
     }
 
@@ -293,23 +294,24 @@ final class BoardModel: ObservableObject {
         if persistMutation(failureMessage: "清空未保存，请重试。", {
             items.removeAll { $0.category == category && !$0.isPinned }
         }) {
-            removed.forEach { _ = store.deleteManagedImage(relativePath: $0.imageRelativePath) }
-            removed.forEach { _ = store.deleteManagedFile(relativePath: $0.fileRelativePath) }
+            let imageCleanupFailed = removed
+                .filter { $0.kind == .image }
+                .contains { !store.deleteManagedImage(relativePath: $0.imageRelativePath) }
+            let fileCleanupFailed = removed
+                .filter { $0.kind == .file }
+                .contains { !store.deleteManagedFile(relativePath: $0.fileRelativePath) }
+            if imageCleanupFailed || fileCleanupFailed {
+                showStatus("分类已清空，但部分站内副本未能清理。")
+            }
         }
     }
 
     func copyToClipboard(_ item: BoardItem) {
         if item.kind == .file {
             guard let url = readyFileExport(for: item) else { return }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            let copied = pasteboard.writeObjects([url as NSURL])
-            lastPasteboardChangeCount = pasteboard.changeCount
-            showStatus(copied ? "已复制文件，可粘贴到其他应用。" : "文件复制失败，请重试。")
+            writeToClipboard(url as NSURL, successMessage: "已复制文件，可粘贴到其他应用。")
             return
         }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
 
         switch item.kind {
         case .file:
@@ -318,7 +320,7 @@ final class BoardModel: ObservableObject {
             guard let text = item.text else {
                 return
             }
-            pasteboard.writeObjects([text as NSString])
+            writeToClipboard(text as NSString, successMessage: "已复制，可粘贴到其他应用。")
         case .image:
             guard let relativePath = item.imageRelativePath,
                   let url = store.managedImageURL(relativePath: relativePath),
@@ -327,11 +329,20 @@ final class BoardModel: ObservableObject {
                 showStatus("图片文件已经不存在。")
                 return
             }
-            pasteboard.writeObjects([image])
+            writeToClipboard(image, successMessage: "已复制，可粘贴到其他应用。")
         }
+    }
 
+    private func writeToClipboard(_ object: NSPasteboardWriting, successMessage: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([object]) else {
+            lastPasteboardChangeCount = pasteboard.changeCount
+            showStatus("复制失败，请重试；本次未能写入系统剪贴板。")
+            return
+        }
         lastPasteboardChangeCount = pasteboard.changeCount
-        showStatus("已复制，可粘贴到其他应用。")
+        showStatus(successMessage)
     }
 
     func dragProvider(for item: BoardItem) -> NSItemProvider {
@@ -652,6 +663,11 @@ final class BoardModel: ObservableObject {
             return
         }
 
+        if let imageData = pasteboard.data(forType: .png) ?? pasteboard.data(forType: .tiff) {
+            addImageData(imageData, to: targetCategory)
+            return
+        }
+
         if let image = NSImage(pasteboard: pasteboard) {
             addImages([image], to: targetCategory)
             return
@@ -667,6 +683,10 @@ final class BoardModel: ObservableObject {
         failureMessage: String,
         _ mutation: () -> Void
     ) -> Bool {
+        guard !boardWritesBlocked else {
+            showStatus(boardLoadWarning ?? "看板数据已保护，当前无法保存修改。")
+            return false
+        }
         let previous = items
         mutation()
         items = Self.normalized(items)
@@ -677,6 +697,54 @@ final class BoardModel: ObservableObject {
             items = previous
             showStatus(failureMessage)
             return false
+        }
+    }
+
+    private func enqueueImageImport(
+        in category: BoardCategory,
+        failureMessage: String,
+        work: @escaping (LocalStore, inout [String]) throws -> [BoardItem]
+    ) {
+        let store = self.store
+        let queue = fileImportQueue
+        showStatus("正在处理图片…")
+        queue.async { [weak self] in
+            var paths: [String] = []
+            let importedItems: [BoardItem]
+            do {
+                importedItems = try work(store, &paths)
+            } catch {
+                let cleanupFailed = paths.contains { !store.deleteManagedImage(relativePath: $0) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.showStatus(cleanupFailed
+                        ? "\(failureMessage) 部分临时副本未能清理。"
+                        : failureMessage)
+                }
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    queue.async {
+                        paths.forEach { _ = store.deleteManagedImage(relativePath: $0) }
+                    }
+                    return
+                }
+                guard !importedItems.isEmpty else {
+                    self.showStatus("没有找到可用的图片。")
+                    return
+                }
+                if self.persistMutation(failureMessage: "图片未保存，请重试。", {
+                    self.insertAtTopOfNormalRegion(importedItems, in: category)
+                }) {
+                    self.showStatus("已添加 \(importedItems.count) 张图片。")
+                    return
+                }
+                queue.async {
+                    paths.forEach { _ = store.deleteManagedImage(relativePath: $0) }
+                }
+            }
         }
     }
 

@@ -208,7 +208,7 @@ public sealed class BoardMutationService
     {
         return await _operationGate.RunAsync(async () =>
         {
-            var removed = _board.RemoveCategory(category);
+            var removed = _board.RemoveCategory(category, preservePinned: true);
             if (removed.Items.Count == 0)
             {
                 return false;

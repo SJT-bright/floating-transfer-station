@@ -772,6 +772,10 @@ private struct ItemCard: View {
         Color(white: appearance.textBrightness).opacity(appearance.textOpacity)
     }
 
+    private var hasName: Bool {
+        !(item.name?.isEmpty ?? true)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
@@ -837,8 +841,8 @@ private struct ItemCard: View {
                         .onChange(of: isEditingName) { focused in
                             if !focused { finishNaming() }
                         }
-                } else if let name = item.name, !name.isEmpty {
-                    if item.kind == .text && item.category != .inbox {
+                } else if let name = item.name, hasName {
+                    if item.kind == .text {
                         Button {
                             isTextExpanded.toggle()
                         } label: {
@@ -875,7 +879,7 @@ private struct ItemCard: View {
             }
 
             if item.kind == .text {
-                if item.category == .inbox || item.name == nil || isTextExpanded {
+                if !hasName || isTextExpanded {
                     FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor), expanded: isTextExpanded)
                         .frame(maxWidth: .infinity)
                         .clipped()
@@ -883,7 +887,7 @@ private struct ItemCard: View {
                     Button {
                         isTextExpanded.toggle()
                     } label: {
-                        Label(isTextExpanded ? (item.category != .inbox && item.name != nil ? "收起为名称" : "收起为两行") : "展开文字",
+                        Label(isTextExpanded ? (hasName ? "收起为名称" : "收起为两行") : "展开文字",
                               systemImage: isTextExpanded ? "chevron.up" : "chevron.down")
                     }
                     .font(.caption)
@@ -1160,7 +1164,8 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     @Binding var targetedCategory: BoardCategory?
 
     private func provider(from info: DropInfo) -> NSItemProvider? {
-        info.itemProviders(for: [UTType.fileURL.identifier]).first
+        info.itemProviders(for: [UTType.fileURL.identifier])
+            .first { model.draggedImageID(from: $0) != nil }
     }
 
     func validateDrop(info: DropInfo) -> Bool {

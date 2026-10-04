@@ -3,6 +3,7 @@ import ServiceManagement
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private let launchAtLoginDisabledKey = "launchAtLoginExplicitlyDisabled"
     private let presentation = PanelPresentation()
     private var panel: NSPanel?
     private var model: BoardModel?
@@ -299,7 +300,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func configureLaunchAtLogin() {
         let service = SMAppService.mainApp
-        if service.status == .notRegistered || service.status == .notFound {
+        if !UserDefaults.standard.bool(forKey: launchAtLoginDisabledKey),
+           service.status == .notRegistered || service.status == .notFound {
             do {
                 try service.register()
             } catch {
@@ -307,15 +309,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
+        refreshLaunchAtLoginMenu()
+    }
+
+    private func refreshLaunchAtLoginMenu() {
+        let service = SMAppService.mainApp
         switch service.status {
         case .enabled:
-            launchAtLoginMenuItem?.title = "开机启动：已开启"
+            launchAtLoginMenuItem?.title = "开机启动：已开启（点击关闭）"
         case .requiresApproval:
-            launchAtLoginMenuItem?.title = "开机启动：需要系统批准"
+            launchAtLoginMenuItem?.title = "开机启动：需要系统批准（点击关闭）"
         case .notRegistered, .notFound:
-            launchAtLoginMenuItem?.title = "开机启动：设置失败"
+            launchAtLoginMenuItem?.title = "开机启动：已关闭（点击开启）"
         @unknown default:
             launchAtLoginMenuItem?.title = "开机启动：状态未知"
+        }
+        launchAtLoginMenuItem?.isEnabled = true
+    }
+
+    @objc private func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        let service = SMAppService.mainApp
+        do {
+            switch service.status {
+            case .enabled, .requiresApproval:
+                try service.unregister()
+                UserDefaults.standard.set(true, forKey: launchAtLoginDisabledKey)
+            case .notRegistered, .notFound:
+                try service.register()
+                UserDefaults.standard.set(false, forKey: launchAtLoginDisabledKey)
+            @unknown default:
+                try service.register()
+                UserDefaults.standard.set(false, forKey: launchAtLoginDisabledKey)
+            }
+            refreshLaunchAtLoginMenu()
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "开机启动设置未更改"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+            refreshLaunchAtLoginMenu()
         }
     }
 
@@ -333,10 +365,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         applicationMenu.addItem(.separator())
         let launchAtLoginItem = NSMenuItem(
             title: "开机启动：正在设置",
-            action: nil,
+            action: #selector(toggleLaunchAtLogin(_:)),
             keyEquivalent: ""
         )
-        launchAtLoginItem.isEnabled = false
+        launchAtLoginItem.target = self
         applicationMenu.addItem(launchAtLoginItem)
         launchAtLoginMenuItem = launchAtLoginItem
         applicationMenu.addItem(.separator())

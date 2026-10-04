@@ -72,6 +72,11 @@ public sealed class CategoryViewModel : ObservableObject
     {
         DraftName = draftName;
         IsEditingName = false;
+        if (string.IsNullOrWhiteSpace(DraftName))
+        {
+            DraftName = DisplayName;
+            return DisplayName;
+        }
         return DraftName;
     }
 

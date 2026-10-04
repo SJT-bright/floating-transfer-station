@@ -474,7 +474,9 @@ begin
   end;
 
   ManagedParent := GetManagedDataParent(DataDirectory);
-  Result := DelTree(ManagedParent, True, True, True);
+  Result := DelTree(DataDirectory, True, True, True);
+  if Result then
+    RemoveDir(ManagedParent);
 end;
 
 procedure RemovePreparedDataDirectory;
@@ -576,31 +578,6 @@ begin
   Result := '';
   if not PrepareDataDirectoryMigration then
     Result := '无法迁移现有内容。请确认目标文件夹可用后重试；原存储位置未作修改。';
-end;
-
-procedure ForceCloseRunningApplication;
-var
-  ResultCode: Integer;
-begin
-  if CheckForMutexes('{#MyAppMutexName}') then
-  begin
-    if not Exec(
-      ExpandConstant('{sys}\taskkill.exe'),
-      '/F /IM "{#MyAppExeName}"',
-      '',
-      SW_HIDE,
-      ewWaitUntilTerminated,
-      ResultCode) then
-    begin
-      Log('Failed to start taskkill; AppMutex will keep setup from overwriting the running application.');
-    end;
-  end;
-end;
-
-function InitializeSetup: Boolean;
-begin
-  ForceCloseRunningApplication;
-  Result := True;
 end;
 
 procedure InitializeWizard;
@@ -715,18 +692,29 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDirectoryRemoved: Boolean;
 begin
   if CurUninstallStep = usUninstall then
   begin
     if not UninstallDataDirectoryValid then
       Exit;
 
-    if (UninstallDataDirectory <> '') and DirExists(UninstallDataDirectory) and
-      not DeleteManagedDataDirectory(UninstallDataDirectory) then
+    DataDirectoryRemoved := (UninstallDataDirectory = '') or
+      not DirExists(UninstallDataDirectory);
+    if not DataDirectoryRemoved then
+      DataDirectoryRemoved := DeleteManagedDataDirectory(UninstallDataDirectory);
+
+    if DataDirectoryRemoved then
+    begin
+      RegDeleteValue(HKCU, DataRegistryKey, DataDirectoryRegistryValue);
+      RegDeleteValue(HKCU, DataRegistryKey, DataParentDirectoryRegistryValue);
+    end
+    else
     begin
       Log('Failed to remove managed data directory: ' + UninstallDataDirectory);
+      MsgBox('内容目录未能完全删除，因此保留了它的登记位置，之后仍可找到并清理：' +
+        UninstallDataDirectory, mbInformation, MB_OK);
     end;
-    RegDeleteValue(HKCU, DataRegistryKey, DataDirectoryRegistryValue);
-    RegDeleteValue(HKCU, DataRegistryKey, DataParentDirectoryRegistryValue);
   end;
 end;

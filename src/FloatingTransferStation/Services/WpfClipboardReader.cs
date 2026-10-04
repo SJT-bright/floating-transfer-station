@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Media.Imaging;
+using System.Runtime.InteropServices;
 using FloatingTransferStation.Models;
 
 namespace FloatingTransferStation.Services;
@@ -37,26 +38,29 @@ public sealed class WpfClipboardReader : IClipboardReader
 
     private ClipboardSnapshot ReadNow()
     {
-        BitmapSource? image = null;
-        IReadOnlyList<string> files = [];
-        string? text = null;
-        var dataObject = Clipboard.GetDataObject();
-        var imageCandidates = dataObject is null ? [] : _imageReader.ReadCandidates(dataObject);
-        image = imageCandidates.FirstOrDefault(candidate => candidate.IsBitmap)?.Bitmap;
-        var encodedImages = imageCandidates.Where(candidate => !candidate.IsBitmap).ToArray();
-
-        if (Clipboard.ContainsFileDropList())
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            files = Clipboard.GetFileDropList().Cast<string>().ToArray();
+            var sequenceBefore = NativeMethods.GetClipboardSequenceNumber();
+            var dataObject = Clipboard.GetDataObject();
+            var imageCandidates = dataObject is null ? [] : _imageReader.ReadCandidates(dataObject);
+            var image = imageCandidates.FirstOrDefault(candidate => candidate.IsBitmap)?.Bitmap;
+            var encodedImages = imageCandidates.Where(candidate => !candidate.IsBitmap).ToArray();
+
+            IReadOnlyList<string> files = Clipboard.ContainsFileDropList()
+                ? Clipboard.GetFileDropList().Cast<string>().ToArray()
+                : [];
+            var text = Clipboard.ContainsText(TextDataFormat.UnicodeText)
+                ? Clipboard.GetText(TextDataFormat.UnicodeText)
+                : null;
+
+            var sequenceAfter = NativeMethods.GetClipboardSequenceNumber();
+            if (sequenceBefore == sequenceAfter)
+            {
+                return new ClipboardSnapshot(sequenceAfter, image, files, text, encodedImages);
+            }
         }
 
-        if (Clipboard.ContainsText(TextDataFormat.UnicodeText))
-        {
-            text = Clipboard.GetText(TextDataFormat.UnicodeText);
-        }
-
-        var sequence = NativeMethods.GetClipboardSequenceNumber();
-        return new ClipboardSnapshot(sequence, image, files, text, encodedImages);
+        throw new ExternalException("The clipboard changed while its contents were being read.");
     }
 
 }

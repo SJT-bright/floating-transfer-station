@@ -133,7 +133,14 @@ private struct LossyDecodable<Value: Decodable>: Decodable {
     let value: Value?
 
     init(from decoder: Decoder) throws {
-        value = try? Value(from: decoder)
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            value = nil
+        } else {
+            // Null placeholders from older files remain compatible, but a malformed
+            // real record must fail the snapshot so LocalStore can recover its backup.
+            value = try Value(from: decoder)
+        }
     }
 }
 
