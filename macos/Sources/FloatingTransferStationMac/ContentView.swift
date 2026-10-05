@@ -880,18 +880,19 @@ private struct ItemCard: View {
 
             if item.kind == .text {
                 if !hasName || isTextExpanded {
-                    FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor), expanded: isTextExpanded)
+                    FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor))
                         .frame(maxWidth: .infinity)
                         .clipped()
                         .help("在文字框内滚动查看完整内容；拖动左上角“文字”可拖出全文")
-                    Button {
-                        isTextExpanded.toggle()
-                    } label: {
-                        Label(isTextExpanded ? (hasName ? "收起为名称" : "收起为两行") : "展开文字",
-                              systemImage: isTextExpanded ? "chevron.up" : "chevron.down")
+                    if hasName {
+                        Button {
+                            isTextExpanded = false
+                        } label: {
+                            Label("收起为名称", systemImage: "chevron.up")
+                        }
+                        .font(.caption)
+                        .buttonStyle(StationButtonStyle())
                     }
-                    .font(.caption)
-                    .buttonStyle(StationButtonStyle())
                     Button("查看全文") { showsFullText = true }
                         .font(.caption)
                         .buttonStyle(StationButtonStyle())
@@ -1040,11 +1041,10 @@ private struct FullTextReader: NSViewRepresentable {
     let text: String
     var compact = false
     var color: NSColor = .labelColor
-    var expanded = false
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
         guard compact, let width = proposal.width else { return nil }
-        return CGSize(width: width, height: expanded ? TextCardLayout.expandedHeight(text: text, width: width) : 32)
+        return CGSize(width: width, height: TextCardLayout.twoLineHeight(text: text, width: width))
     }
 
     func makeNSView(context: Context) -> NSScrollView {

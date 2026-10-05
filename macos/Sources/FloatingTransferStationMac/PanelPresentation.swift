@@ -139,7 +139,7 @@ struct PanelInteractionPolicy {
 }
 
 enum TextCardLayout {
-    static func expandedHeight(text: String, width: CGFloat) -> CGFloat {
+    static func twoLineHeight(text: String, width: CGFloat) -> CGFloat {
         let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
@@ -147,7 +147,24 @@ enum TextCardLayout {
         storage.addLayoutManager(layout)
         layout.addTextContainer(container)
         layout.ensureLayout(forBoundingRect: NSRect(x: 0, y: 0, width: max(1, width), height: 180), in: container)
-        return min(180, max(32, ceil(layout.usedRect(for: container).height)))
+
+        guard layout.numberOfGlyphs > 0 else {
+            return ceil(NSFont.systemFont(ofSize: 13).ascender - NSFont.systemFont(ofSize: 13).descender)
+        }
+
+        var glyphIndex = 0
+        var lineCount = 0
+        var visibleHeight: CGFloat = 0
+        while glyphIndex < layout.numberOfGlyphs, lineCount < 2 {
+            var lineRange = NSRange(location: 0, length: 0)
+            let lineRect = layout.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineRange)
+            visibleHeight = lineRect.maxY
+            lineCount += 1
+            let nextGlyph = NSMaxRange(lineRange)
+            guard nextGlyph > glyphIndex else { break }
+            glyphIndex = nextGlyph
+        }
+        return ceil(visibleHeight)
     }
 }
 
