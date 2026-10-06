@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dragStartMouse: NSPoint?
     private var expandedOrigin = NSPoint.zero
     private var isProgrammaticTransition = false
+    private var restartInProgress = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -372,6 +373,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         applicationMenu.addItem(launchAtLoginItem)
         launchAtLoginMenuItem = launchAtLoginItem
         applicationMenu.addItem(.separator())
+        let restartItem = NSMenuItem(title: "重新启动悬浮中转站", action: #selector(restartStation(_:)), keyEquivalent: "r")
+        restartItem.keyEquivalentModifierMask = [.command, .shift]
+        restartItem.target = self
+        applicationMenu.addItem(restartItem)
+        applicationMenu.addItem(.separator())
         applicationMenu.addItem(
             withTitle: "退出悬浮中转站",
             action: #selector(NSApplication.terminate(_:)),
@@ -379,6 +385,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         applicationItem.submenu = applicationMenu
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func restartStation(_ sender: NSMenuItem) {
+        guard !restartInProgress else { return }
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/重启悬浮中转站.app/Contents/MacOS/StationRestart")
+        let process = Process()
+        process.executableURL = helper
+        process.arguments = ["--app", Bundle.main.bundleURL.resolvingSymlinksInPath().path]
+        do {
+            try process.run()
+            restartInProgress = true
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "重启工具不可用"
+            alert.informativeText = "请重新安装完整应用包，或使用旁边的“重启悬浮中转站.app”。"
+            alert.runModal()
+        }
     }
 }
 

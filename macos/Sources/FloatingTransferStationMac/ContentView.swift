@@ -193,6 +193,7 @@ struct ContentView: View {
     @State private var newCategoryName = ""
     @State private var showsAppearance = false
     @State private var searchQuery = ""
+    @State private var boardPage = 0
 
     private var isSearching: Bool {
         !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -231,6 +232,8 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .foregroundStyle(textColor)
         .onHover(perform: presentation.handleHover)
+        .onChange(of: model.activeCategory) { _ in boardPage = 0 }
+        .onChange(of: searchQuery) { _ in boardPage = 0 }
         .onTapGesture {
             if !presentation.isExpanded {
                 presentation.handleHover(true)
@@ -487,27 +490,48 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding(28)
         } else {
-            ScrollView {
-                LazyVStack(spacing: 6) {
-                    ForEach(Array(visibleItems.enumerated()), id: \.element.id) { index, item in
-                        if index > 0,
-                           visibleItems[index - 1].isPinned,
-                           !item.isPinned {
-                            HStack(spacing: 8) {
-                                Rectangle()
-                                    .frame(height: 1)
-                                Text("普通")
-                                    .font(.caption2)
-                                Rectangle()
-                                    .frame(height: 1)
+            let page = BoardPage(totalCount: visibleItems.count, requestedPage: boardPage)
+            VStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(spacing: 6) {
+                        ForEach(Array(visibleItems.enumerated())[page.range], id: \.element.id) { index, item in
+                            if index > 0,
+                               visibleItems[index - 1].isPinned,
+                               !item.isPinned {
+                                HStack(spacing: 8) {
+                                    Rectangle()
+                                        .frame(height: 1)
+                                    Text("普通")
+                                        .font(.caption2)
+                                    Rectangle()
+                                        .frame(height: 1)
+                                }
+                                .foregroundStyle(.quaternary)
+                                .padding(.horizontal, 4)
                             }
-                            .foregroundStyle(.quaternary)
-                            .padding(.horizontal, 4)
+                            ItemCard(model: model, item: item, showsCategory: isSearching)
                         }
-                        ItemCard(model: model, item: item, showsCategory: isSearching)
                     }
+                    .padding(7)
                 }
-                .padding(7)
+                .id("\(model.activeCategory.rawValue)-\(searchQuery)-\(page.index)")
+                if page.pageCount > 1 {
+                    Divider()
+                    HStack {
+                        Button("上一页") { boardPage = page.index - 1 }
+                            .disabled(page.index == 0)
+                        Spacer()
+                        Text("\(page.index + 1) / \(page.pageCount) 页")
+                            .monospacedDigit()
+                        Spacer()
+                        Button("下一页") { boardPage = page.index + 1 }
+                            .disabled(page.index == page.pageCount - 1)
+                    }
+                    .font(.caption)
+                    .buttonStyle(StationButtonStyle())
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                }
             }
         }
     }
@@ -951,26 +975,8 @@ private struct ItemCard: View {
                         .font(.caption)
                         .foregroundStyle(textColor.opacity(0.75))
                 }
-            } else if let url = model.imageURL(for: item),
-                      let imageData = try? Data(contentsOf: url),
-                      let image = NSImage(data: imageData) {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .contentShape(Rectangle())
-                    .onDrag {
-                        model.dragProvider(for: item, imageData: imageData)
-                    } preview: {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 160, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    .id(item.id)
-                    .help("拖到其他分类复制，或拖到其他应用")
+            } else if let url = model.imageURL(for: item) {
+                StationImageCard(model: model, item: item, url: url)
             } else {
                 Label("图片文件已丢失", systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -1036,6 +1042,46 @@ private struct ItemCard: View {
         guard isRenamingItem else { return }
         saveName()
         isRenamingItem = false
+    }
+}
+
+private struct StationImageCard: View {
+    let model: BoardModel
+    let item: BoardItem
+    let url: URL
+    @State private var preview: ImagePreview?
+    @State private var loading = true
+
+    var body: some View {
+        Group {
+            if let preview {
+                Image(nsImage: preview.image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Rectangle())
+                    .onDrag { model.dragProvider(for: item, imageData: preview.data) } preview: {
+                        Image(nsImage: preview.image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 160, height: 120)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .help("拖到其他分类复制，或拖到其他应用")
+            } else if loading {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 60)
+            } else {
+                Label("图片文件已丢失或无法读取", systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+            }
+        }
+        .task(id: url) {
+            let loaded = await ImagePreviewStore.shared.load(url)
+            guard !Task.isCancelled else { return }
+            preview = loaded
+            loading = false
+        }
     }
 }
 

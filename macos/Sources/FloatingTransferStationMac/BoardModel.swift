@@ -541,18 +541,22 @@ final class BoardModel: ObservableObject {
     }
 
     func updateWindowSettings(panelWidth: Double, height: Double, top: Double, origin: NSPoint? = nil) {
-        let previous = settings
-        settings.panelWidth = min(max(panelWidth, 280), 640)
-        settings.windowHeight = max(height, 360)
-        settings.top = max(top, 0)
+        var updated = settings
+        updated.panelWidth = min(max(panelWidth, 280), 640)
+        updated.windowHeight = max(height, 360)
+        updated.top = max(top, 0)
         if let origin {
-            settings.windowX = origin.x
-            settings.windowY = origin.y
+            updated.windowX = origin.x
+            updated.windowY = origin.y
         }
+        // AppKit may repeat move/resize notifications during layout. Publishing
+        // each field separately used to invalidate every card, even unchanged.
+        guard updated != settings else { return }
         do {
-            try store.saveSettings(settings)
+            try store.saveSettings(updated)
+            settings = updated
         } catch {
-            settings = previous
+            showStatus("窗口位置未保存，请重试。")
         }
     }
 

@@ -48,6 +48,9 @@ compile_architecture() {
         "${compiler_arguments[@]}" \
         "$package_root"/Sources/FloatingTransferStationMac/*.swift \
         -o "$binary_path"
+    "$swift_compiler" "${compiler_arguments[@]}" \
+        "$package_root/Sources/StationRestart/main.swift" \
+        -o "$work_root/StationRestart-$architecture"
 }
 
 compile_architecture arm64
@@ -62,6 +65,14 @@ universal_binary="$application_path/Contents/MacOS/FloatingTransferStationMac"
     -output "$universal_binary"
 /usr/bin/ditto "$package_root/Info.plist" "$application_path/Contents/Info.plist"
 /bin/chmod +x "$universal_binary"
+restart_path="$work_root/重启悬浮中转站.app"
+/bin/mkdir -p "$restart_path/Contents/MacOS"
+/usr/bin/lipo -create "$work_root/StationRestart-arm64" "$work_root/StationRestart-x86_64" \
+    -output "$restart_path/Contents/MacOS/StationRestart"
+/usr/bin/ditto "$package_root/Restart-Info.plist" "$restart_path/Contents/Info.plist"
+/usr/bin/codesign --force --sign - "$restart_path"
+/bin/mkdir -p "$application_path/Contents/Helpers"
+/usr/bin/ditto "$restart_path" "$application_path/Contents/Helpers/重启悬浮中转站.app"
 /usr/bin/codesign --force --deep --options runtime --sign - "$application_path"
 
 /usr/bin/codesign --verify --deep --strict "$application_path"
@@ -70,6 +81,7 @@ universal_binary="$application_path/Contents/MacOS/FloatingTransferStationMac"
 share_folder="$work_root/悬浮中转站-macOS"
 /bin/mkdir -p "$share_folder"
 /usr/bin/ditto "$application_path" "$share_folder/悬浮中转站.app"
+/usr/bin/ditto "$restart_path" "$share_folder/重启悬浮中转站.app"
 /usr/bin/ditto "$package_root/使用说明.txt" "$share_folder/使用说明.txt"
 /usr/bin/ditto "$repository_root/LICENSE" "$share_folder/LICENSE"
 

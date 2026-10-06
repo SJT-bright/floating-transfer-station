@@ -109,6 +109,7 @@ final class PanelPresentation: ObservableObject {
     }
 
     func setExpanded(_ expanded: Bool) {
+        guard isExpanded != expanded else { return }
         isExpanded = expanded
     }
 
@@ -140,10 +141,13 @@ struct PanelInteractionPolicy {
 
 enum TextCardLayout {
     static func twoLineHeight(text: String, width: CGFloat) -> CGFloat {
-        let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
+        // Measuring two lines must not generate glyphs for an entire long document.
+        // The reader/clipboard/drag still retain the full original text.
+        let storage = NSTextStorage(string: String(text.prefix(600)), attributes: [.font: NSFont.systemFont(ofSize: 13)])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
+        container.maximumNumberOfLines = 2
         storage.addLayoutManager(layout)
         layout.addTextContainer(container)
         layout.ensureLayout(forBoundingRect: NSRect(x: 0, y: 0, width: max(1, width), height: 180), in: container)
@@ -165,6 +169,21 @@ enum TextCardLayout {
             glyphIndex = nextGlyph
         }
         return ceil(visibleHeight)
+    }
+}
+
+struct BoardPage {
+    static let capacity = 40
+    let index: Int
+    let pageCount: Int
+    let range: Range<Int>
+
+    init(totalCount: Int, requestedPage: Int) {
+        let count = max(0, totalCount)
+        pageCount = max(1, (count + Self.capacity - 1) / Self.capacity)
+        index = min(max(0, requestedPage), pageCount - 1)
+        let start = index * Self.capacity
+        range = start..<min(start + Self.capacity, count)
     }
 }
 
