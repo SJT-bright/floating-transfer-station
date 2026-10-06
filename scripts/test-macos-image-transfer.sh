@@ -4,7 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repository_root="$(cd "$script_dir/.." && pwd)"
 package_root="$repository_root/macos"
-test_root="$package_root/.build/tests"
+test_root="$package_root/.build/image-transfer-tests"
 module_cache="$package_root/.build/module-cache"
 sdk_path="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
 swift_compiler="$(/usr/bin/xcrun --find swiftc)"
@@ -25,12 +25,18 @@ compiler_arguments=(
     -module-cache-path "$module_cache"
     -framework AppKit
     -framework UniformTypeIdentifiers
+    -framework ImageIO
+    -framework QuartzCore
 )
 if [[ -n "$interface_version" ]]; then
     compiler_arguments+=(
         -Xfrontend -interface-compiler-version
         -Xfrontend "$interface_version"
     )
+fi
+# The baseline option runs the old API's failing regression before the snapshot API exists.
+if [[ "${1:-}" != "--baseline" ]]; then
+    compiler_arguments+=(-D IMAGE_TRANSFER_SNAPSHOT_API)
 fi
 
 "$swift_compiler" \
@@ -40,7 +46,7 @@ fi
     "$package_root/Sources/FloatingTransferStationMac/BoardPersistenceSafety.swift" \
     "$package_root/Sources/FloatingTransferStationMac/BoardModel.swift" \
     "$package_root/Sources/FloatingTransferStationMac/PanelPresentation.swift" \
-    "$package_root/Tests/MacCoreTests/main.swift" \
-    -o "$test_root/MacCoreTests"
+    "$package_root/Tests/ImageTransferTests/main.swift" \
+    -o "$test_root/ImageTransferTests"
 
-"$test_root/MacCoreTests"
+"$test_root/ImageTransferTests"

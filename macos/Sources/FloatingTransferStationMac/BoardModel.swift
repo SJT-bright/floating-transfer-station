@@ -345,7 +345,7 @@ final class BoardModel: ObservableObject {
         showStatus(successMessage)
     }
 
-    func dragProvider(for item: BoardItem) -> NSItemProvider {
+    func dragProvider(for item: BoardItem, imageData: Data? = nil) -> NSItemProvider {
         switch item.kind {
         case .file:
             guard let url = readyFileExport(for: item) else { return NSItemProvider() }
@@ -356,23 +356,33 @@ final class BoardModel: ObservableObject {
             return NSItemProvider(object: (item.text ?? "") as NSString)
         case .image:
             guard let relativePath = item.imageRelativePath,
-                  let managedURL = store.managedImageURL(relativePath: relativePath),
-                  let image = NSImage(contentsOf: managedURL)
+                  let managedURL = store.managedImageURL(relativePath: relativePath)
             else {
                 return NSItemProvider()
             }
 
-            let provider: NSItemProvider
             do {
-                let exportURL = try store.exportImageForDrag(relativePath: relativePath)
-                provider = NSItemProvider(contentsOf: exportURL) ?? NSItemProvider()
+                // Every representation is bound to the same rendered PNG snapshot.
+                let bytes = try imageData ?? Data(contentsOf: managedURL)
+                guard NSBitmapImageRep(data: bytes) != nil else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                let exportURL = try store.exportImageForDrag(relativePath: relativePath, imageData: bytes)
+                let provider = NSItemProvider(object: exportURL as NSURL)
                 provider.suggestedName = exportURL.deletingPathExtension().lastPathComponent
+                provider.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+                    completion(bytes, nil)
+                    return nil
+                }
+                provider.registerFileRepresentation(forTypeIdentifier: UTType.png.identifier, fileOptions: [], visibility: .all) { completion in
+                    completion(exportURL, false, nil)
+                    return nil
+                }
+                return provider
             } catch {
                 showStatus("图片导出副本创建失败，请重试。")
-                provider = NSItemProvider()
+                return NSItemProvider()
             }
-            provider.registerObject(image, visibility: .all)
-            return provider
         }
     }
 
@@ -391,15 +401,13 @@ final class BoardModel: ObservableObject {
               let url = URL(string: rawURL),
               url.isFileURL,
               let id = draggedImageID(fromFileName: url.lastPathComponent),
-              let source = items.first(where: { $0.id == id }),
-              let managedURL = imageURL(for: source)
+              let source = items.first(where: { $0.id == id })
         else {
             showStatus("无法识别这张拖动图片，请重试。")
             return false
         }
-        let exportURL = store.paths.dragExportsDirectory.appendingPathComponent(managedURL.lastPathComponent)
-        guard url.standardizedFileURL == exportURL.standardizedFileURL
-                || url.standardizedFileURL == managedURL.standardizedFileURL else {
+        guard let relativePath = source.imageRelativePath,
+              store.isImageDragURL(url, relativePath: relativePath) else {
             showStatus("请从中转站内拖动图片到其他分类。")
             return false
         }

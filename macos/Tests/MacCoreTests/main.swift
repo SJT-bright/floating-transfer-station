@@ -180,12 +180,11 @@ enum MacCoreTests {
     }
 
     private static func testExpandedTextFitsActualLines() throws {
-        let threeLines = TextCardLayout.expandedHeight(text: "第一行\n第二行\n第三行", width: 280)
-        try check(threeLines > 32 && threeLines < 65, "three lines still reserve a large blank area")
-        try check(TextCardLayout.expandedHeight(text: "短文字", width: 280) == 32, "short text grew unnecessarily")
-        let wrapping = String(repeating: "中文自动换行", count: 8)
-        try check(TextCardLayout.expandedHeight(text: wrapping, width: 140) > TextCardLayout.expandedHeight(text: wrapping, width: 300), "height ignores actual wrapping width")
-        try check(TextCardLayout.expandedHeight(text: String(repeating: "长文\n", count: 1000), width: 280) == 180, "long text exceeds scrolling height limit")
+        let twoLines = TextCardLayout.twoLineHeight(text: "第一行\n第二行", width: 280)
+        let threeLines = TextCardLayout.twoLineHeight(text: "第一行\n第二行\n第三行", width: 280)
+        try check(threeLines == twoLines, "preview grew beyond the two-line requirement")
+        try check(TextCardLayout.twoLineHeight(text: "短文字", width: 280) < twoLines, "short text reserves blank lines")
+        try check(TextCardLayout.twoLineHeight(text: String(repeating: "长文\n", count: 1000), width: 280) == twoLines, "long text exceeds two-line scrolling height")
     }
 
     private static func testNamesSearchAndPersistence() throws {
@@ -382,12 +381,14 @@ enum MacCoreTests {
             try check(model.orderedItems(in: category).isEmpty, "clipboard leaked into selected category")
             try check(model.activeCategory == category, "capture changed the browsing category")
         }
+        try waitUntil { model.orderedItems(in: .inbox).count == 8 }
         try check(model.orderedItems(in: .inbox).count == 8, "clipboard did not collect all content in Inbox")
         let filePath = try store.storeImage(image)
         let fileURL = try require(store.managedImageURL(relativePath: filePath), "missing file")
         pasteboard.clearContents()
         pasteboard.writeObjects([fileURL as NSURL])
         model.capturePasteboard(pasteboard, force: true)
+        try waitUntil { model.orderedItems(in: .inbox).count == 9 }
         try check(model.orderedItems(in: .inbox).count == 9, "manual capture/file image missed Inbox")
     }
 
@@ -455,6 +456,7 @@ enum MacCoreTests {
             return true
         }
         model.addImages([image, image], to: .inbox)
+        try waitUntil { model.items.filter { $0.kind == .image }.count == 2 }
         let images = model.items.filter { $0.kind == .image }
         try check(images.count == 2, "missing image fixtures")
         let pinnedImageURL = try require(model.imageURL(for: images[0]), "missing pinned image URL")
@@ -706,6 +708,7 @@ enum MacCoreTests {
             return true
         }
         model.addImages([image], to: .inbox)
+        try waitUntil { model.orderedItems(in: .inbox).count == 1 }
 
         let item = try require(model.orderedItems(in: .inbox).first, "missing image item")
         let managedURL = try require(model.imageURL(for: item), "missing managed image URL")
@@ -782,6 +785,7 @@ enum MacCoreTests {
             return true
         }
         model.addImages([image], to: .inbox)
+        try waitUntil { model.orderedItems(in: .inbox).count == 1 }
 
         let source = try require(model.orderedItems(in: .inbox).first, "missing copy source")
         let sourceURL = try require(model.imageURL(for: source), "missing copy source image")

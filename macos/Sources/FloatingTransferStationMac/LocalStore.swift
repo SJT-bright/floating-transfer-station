@@ -1,5 +1,8 @@
 import AppKit
+import CryptoKit
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 struct AppPaths {
     let dataDirectory: URL
@@ -112,9 +115,17 @@ final class LocalStore {
     }
 
     func storeImageData(_ imageData: Data, id: UUID = UUID()) throws -> String {
-        guard let representation = NSBitmapImageRep(data: imageData),
-              let png = representation.representation(using: .png, properties: [:])
-        else {
+        guard let representation = NSBitmapImageRep(data: imageData) else {
+            throw CocoaError(.fileWriteInapplicableStringEncoding)
+        }
+        let png: Data
+        if let source = CGImageSourceCreateWithData(imageData as CFData, nil),
+           CGImageSourceGetType(source) as String? == UTType.png.identifier {
+            // Preserve the original pixels, ICC profile and metadata together.
+            png = imageData
+        } else if let encoded = representation.representation(using: .png, properties: [:]) {
+            png = encoded
+        } else {
             throw CocoaError(.fileWriteInapplicableStringEncoding)
         }
 
@@ -129,12 +140,12 @@ final class LocalStore {
     }
 
     func storeImageFile(_ source: URL, id: UUID = UUID()) throws -> String {
-        guard source.isFileURL,
-              let image = NSImage(contentsOf: source)
-        else {
+        guard source.isFileURL else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        return try storeImage(image, id: id)
+        let scoped = source.startAccessingSecurityScopedResource()
+        defer { if scoped { source.stopAccessingSecurityScopedResource() } }
+        return try storeImageData(Data(contentsOf: source), id: id)
     }
 
     func managedImageURL(relativePath: String) -> URL? {
@@ -246,28 +257,59 @@ final class LocalStore {
         }
     }
 
-    func exportImageForDrag(relativePath: String) throws -> URL {
+    func exportImageForDrag(relativePath: String, imageData: Data? = nil) throws -> URL {
         guard let source = managedImageURL(relativePath: relativePath),
               fileManager.fileExists(atPath: source.path)
         else {
             throw CocoaError(.fileNoSuchFile)
         }
 
+        let bytes = try imageData ?? Data(contentsOf: source)
+        var destination = paths.dragExportsDirectory
+            .appendingPathComponent(source.lastPathComponent, isDirectory: false)
+        if fileManager.fileExists(atPath: destination.path),
+           try Data(contentsOf: destination) != bytes {
+            // Keep paths already referenced by video projects immutable.
+            destination = versionedImageExportURL(source: source, imageData: bytes)
+        }
         try fileManager.createDirectory(
-            at: paths.dragExportsDirectory,
+            at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o755]
         )
-        let destination = paths.dragExportsDirectory
-            .appendingPathComponent(source.lastPathComponent, isDirectory: false)
-        if !fileManager.fileExists(atPath: destination.path) {
-            try fileManager.copyItem(at: source, to: destination)
+        if fileManager.fileExists(atPath: destination.path) {
+            guard try Data(contentsOf: destination) == bytes else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+        } else {
+            try bytes.write(to: destination, options: .atomic)
         }
         try fileManager.setAttributes(
             [.posixPermissions: 0o644],
             ofItemAtPath: destination.path
         )
         return destination
+    }
+
+    func isImageDragURL(_ url: URL, relativePath: String) -> Bool {
+        guard url.isFileURL,
+              let source = managedImageURL(relativePath: relativePath),
+              let bytes = try? Data(contentsOf: source) else { return false }
+        let candidate = url.standardizedFileURL
+        let legacy = paths.dragExportsDirectory.appendingPathComponent(source.lastPathComponent)
+        guard candidate == source.standardizedFileURL
+                || candidate == legacy.standardizedFileURL
+                || candidate == versionedImageExportURL(source: source, imageData: bytes).standardizedFileURL
+        else { return false }
+        return (try? Data(contentsOf: candidate)) == bytes
+    }
+
+    private func versionedImageExportURL(source: URL, imageData: Data) -> URL {
+        let digest = SHA256.hash(data: imageData).map { String(format: "%02x", $0) }.joined()
+        return paths.dragExportsDirectory
+            .appendingPathComponent("images", isDirectory: true)
+            .appendingPathComponent(digest, isDirectory: true)
+            .appendingPathComponent(source.lastPathComponent)
     }
 
     @discardableResult

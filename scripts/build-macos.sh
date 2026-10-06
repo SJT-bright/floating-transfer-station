@@ -19,6 +19,7 @@ fi
 /bin/mkdir -p "$build_root" "$module_cache"
 compiler_arguments=(
     -O
+    -warnings-as-errors
     -swift-version 5
     -target "$architecture-apple-macosx13.0"
     -sdk "$sdk_path"

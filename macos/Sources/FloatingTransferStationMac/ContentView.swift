@@ -952,7 +952,8 @@ private struct ItemCard: View {
                         .foregroundStyle(textColor.opacity(0.75))
                 }
             } else if let url = model.imageURL(for: item),
-                      let image = NSImage(contentsOf: url) {
+                      let imageData = try? Data(contentsOf: url),
+                      let image = NSImage(data: imageData) {
                 Image(nsImage: image)
                     .resizable()
                     .scaledToFit()
@@ -960,7 +961,7 @@ private struct ItemCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
                     .onDrag {
-                        model.dragProvider(for: item)
+                        model.dragProvider(for: item, imageData: imageData)
                     } preview: {
                         Image(nsImage: image)
                             .resizable()
@@ -968,6 +969,7 @@ private struct ItemCard: View {
                             .frame(width: 160, height: 120)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
+                    .id(item.id)
                     .help("拖到其他分类复制，或拖到其他应用")
             } else {
                 Label("图片文件已丢失", systemImage: "exclamationmark.triangle")
