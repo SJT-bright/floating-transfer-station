@@ -60,6 +60,8 @@ struct BoardItem: Codable, Identifiable, Equatable {
     var category: BoardCategory
     var order: Int
     var createdAt: Date
+    // Stable FIFO tie-break for timestamps that serialize at millisecond precision.
+    var arrivalSequence: Int64?
     var text: String?
     var imageRelativePath: String?
     var isPinned: Bool
@@ -77,6 +79,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         category: BoardCategory,
         order: Int,
         createdAt: Date = Date(),
+        arrivalSequence: Int64? = nil,
         text: String? = nil,
         imageRelativePath: String? = nil,
         isPinned: Bool = false,
@@ -90,6 +93,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         self.category = category
         self.order = order
         self.createdAt = createdAt
+        self.arrivalSequence = arrivalSequence
         self.text = text
         self.imageRelativePath = imageRelativePath
         self.isPinned = isPinned
@@ -105,6 +109,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         case category
         case order
         case createdAt
+        case arrivalSequence
         case text
         case imageRelativePath
         case isPinned
@@ -119,6 +124,7 @@ struct BoardItem: Codable, Identifiable, Equatable {
         category = try container.decode(BoardCategory.self, forKey: .category)
         order = try container.decode(Int.self, forKey: .order)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
+        arrivalSequence = try container.decodeIfPresent(Int64.self, forKey: .arrivalSequence)
         text = try container.decodeIfPresent(String.self, forKey: .text)
         imageRelativePath = try container.decodeIfPresent(String.self, forKey: .imageRelativePath)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
@@ -220,12 +226,18 @@ struct WindowSettings: Codable, Equatable {
     var top: Double
     var categoryNames: [String: String]
     var customCategories: [BoardCategory]
+    var successSoundEnabled: Bool
+    var inboxItemLimit: Int?
+    var deletedCategoryIDs: [String]
 
     static let `default` = WindowSettings(
         panelWidth: 360,
         windowHeight: 640,
         top: 80,
-        categoryNames: [:]
+        categoryNames: [:],
+        successSoundEnabled: true,
+        inboxItemLimit: nil,
+        deletedCategoryIDs: []
     )
 
     init(
@@ -233,13 +245,19 @@ struct WindowSettings: Codable, Equatable {
         windowHeight: Double,
         top: Double,
         categoryNames: [String: String] = [:],
-        customCategories: [BoardCategory] = []
+        customCategories: [BoardCategory] = [],
+        successSoundEnabled: Bool = true,
+        inboxItemLimit: Int? = nil,
+        deletedCategoryIDs: [String] = []
     ) {
         self.panelWidth = panelWidth
         self.windowHeight = windowHeight
         self.top = top
         self.categoryNames = categoryNames
         self.customCategories = customCategories
+        self.successSoundEnabled = successSoundEnabled
+        self.inboxItemLimit = inboxItemLimit.flatMap { $0 > 0 ? $0 : nil }
+        self.deletedCategoryIDs = deletedCategoryIDs
     }
 
     func displayName(for category: BoardCategory) -> String {
@@ -255,6 +273,9 @@ struct WindowSettings: Codable, Equatable {
         case appearance
         case windowX
         case windowY
+        case successSoundEnabled
+        case inboxItemLimit
+        case deletedCategoryIDs
     }
 
     init(from decoder: Decoder) throws {
@@ -270,5 +291,9 @@ struct WindowSettings: Codable, Equatable {
         appearance = try container.decodeIfPresent(PanelAppearance.self, forKey: .appearance)?.normalized
         windowX = try container.decodeIfPresent(Double.self, forKey: .windowX)
         windowY = try container.decodeIfPresent(Double.self, forKey: .windowY)
+        successSoundEnabled = try container.decodeIfPresent(Bool.self, forKey: .successSoundEnabled) ?? true
+        let decodedLimit = try container.decodeIfPresent(Int.self, forKey: .inboxItemLimit)
+        inboxItemLimit = decodedLimit.flatMap { $0 > 0 ? $0 : nil }
+        deletedCategoryIDs = try container.decodeIfPresent([String].self, forKey: .deletedCategoryIDs) ?? []
     }
 }

@@ -4,12 +4,15 @@ import Foundation
 import UniformTypeIdentifiers
 
 final class BoardModel: ObservableObject {
+    static let textItemDragType = "com.oiawlm.station.text-item"
+
     @Published private(set) var items: [BoardItem]
     @Published var activeCategory: BoardCategory
     let defaultCaptureCategory: BoardCategory = .inbox
     @Published private(set) var settings: WindowSettings
     @Published private(set) var statusText = ""
     @Published private(set) var isImportingFiles = false
+    var onCopySuccess: (() -> Void)?
 
     private let store: LocalStore
     private let boardWritesBlocked: Bool
@@ -32,8 +35,13 @@ final class BoardModel: ObservableObject {
             : BoardPersistenceSafety.warning(for: backupURL)
         boardWritesBlocked = loadWarning != nil
         boardLoadWarning = loadWarning
-        items = Self.normalized(store.loadBoard())
-        settings = store.loadSettings()
+        let loadedSettings = store.loadSettings()
+        settings = loadedSettings
+        let loadedItems = Self.initializeArrivalSequences(store.loadBoard())
+        items = Self.normalized(Self.projectDeletedCategories(
+            loadedItems,
+            deletedCategoryIDs: Set(loadedSettings.deletedCategoryIDs)
+        ))
         activeCategory = .inbox
         lastPasteboardChangeCount = NSPasteboard.general.changeCount
         if let loadWarning {
@@ -60,7 +68,9 @@ final class BoardModel: ObservableObject {
     }
 
     func selectCategory(_ category: BoardCategory) {
-        activeCategory = category
+        activeCategory = isDeletedCategory(category) || !categories.contains(category)
+            ? .inbox
+            : category
     }
 
     func searchNamedItems(_ query: String) -> [BoardItem] {
@@ -85,7 +95,7 @@ final class BoardModel: ObservableObject {
     var categories: [BoardCategory] {
         var seen = Set<BoardCategory>()
         return (BoardCategory.visibleCases + settings.customCategories + items.map(\.category))
-            .filter { seen.insert($0).inserted }
+            .filter { !isDeletedCategory($0) && seen.insert($0).inserted }
     }
 
     @discardableResult
@@ -108,6 +118,68 @@ final class BoardModel: ObservableObject {
         }
     }
 
+    func canDeleteCategory(_ category: BoardCategory) -> Bool {
+        category != .inbox
+            && category != .files
+            && !isDeletedCategory(category)
+            && categories.contains(category)
+    }
+
+    @discardableResult
+    func deleteCategory(_ category: BoardCategory) -> Bool {
+        guard canDeleteCategory(category) else { return false }
+
+        let categoryName = displayName(for: category)
+        var updated = settings
+        if !updated.deletedCategoryIDs.contains(category.rawValue) {
+            updated.deletedCategoryIDs.append(category.rawValue)
+        }
+        updated.customCategories.removeAll { $0 == category }
+        updated.categoryNames.removeValue(forKey: category.rawValue)
+
+        do {
+            // This settings write is the category deletion's single commit point.
+            // Existing board records are projected into Inbox on every load/save.
+            try store.saveSettings(updated)
+            settings = updated
+            items = Self.normalized(Self.projectDeletedCategories(
+                items,
+                deletedCategoryIDs: Set(updated.deletedCategoryIDs)
+            ))
+            activeCategory = .inbox
+            showStatus("已删除分类“\(categoryName)”，其中内容已移入待分类。")
+            return true
+        } catch {
+            showStatus("分类未删除，请重试。")
+            return false
+        }
+    }
+
+    func setSuccessSoundEnabled(_ enabled: Bool) {
+        guard settings.successSoundEnabled != enabled else { return }
+        var updated = settings
+        updated.successSoundEnabled = enabled
+        do {
+            try store.saveSettings(updated)
+            settings = updated
+        } catch {
+            showStatus("成功音效设置未保存，请重试。")
+        }
+    }
+
+    func setInboxItemLimit(_ limit: Int?) {
+        if let limit, limit <= 0 { return }
+        guard settings.inboxItemLimit != limit else { return }
+        var updated = settings
+        updated.inboxItemLimit = limit
+        do {
+            try store.saveSettings(updated)
+            settings = updated
+        } catch {
+            showStatus("待分类容量未保存，请重试。")
+        }
+    }
+
     func captureCurrentClipboard() {
         capturePasteboard(force: true)
     }
@@ -119,21 +191,24 @@ final class BoardModel: ObservableObject {
             return
         }
 
-        let target = category ?? defaultCaptureCategory
+        let target = resolvedCategory(category ?? defaultCaptureCategory)
         let item = BoardItem(
             kind: .text,
             category: target,
             order: 0,
             text: rawText
         )
-        _ = persistMutation(failureMessage: "本次文字未保存，请重试。") {
-            insertAtTopOfNormalRegion([item], in: target)
+        guard let retained = persistNewItems([item], in: target, failureMessage: "本次文字未保存，请重试。"),
+              retained.contains(where: { $0.id == item.id }) else {
+            return
         }
+        showStatus("已保存到“\(displayName(for: target))”。")
+        notifyCopySuccessIfEnabled()
     }
 
     func addImageFiles(_ urls: [URL], to category: BoardCategory? = nil) {
         if category == .files { importFiles(urls); return }
-        let target = category ?? defaultCaptureCategory
+        let target = resolvedCategory(category ?? defaultCaptureCategory)
         enqueueImageImport(in: target, failureMessage: "拖入图片无法读取，请换一张静态图片重试。") { store, paths in
             try urls.filter(\.isFileURL).map { url in
                 let id = UUID()
@@ -152,7 +227,7 @@ final class BoardModel: ObservableObject {
 
     func addImages(_ images: [NSImage], to category: BoardCategory? = nil) {
         guard category != .files else { return }
-        let target = category ?? defaultCaptureCategory
+        let target = resolvedCategory(category ?? defaultCaptureCategory)
         enqueueImageImport(in: target, failureMessage: "图片无法转换为本地 PNG，请重试。") { store, paths in
             try images.map { image in
                 let id = UUID()
@@ -171,7 +246,7 @@ final class BoardModel: ObservableObject {
 
     func addImageData(_ imageData: Data, to category: BoardCategory? = nil) {
         guard category != .files else { return }
-        let target = category ?? defaultCaptureCategory
+        let target = resolvedCategory(category ?? defaultCaptureCategory)
         enqueueImageImport(in: target, failureMessage: "图片无法转换为本地 PNG，请重试。") { store, paths in
             let id = UUID()
             let relativePath = try store.storeImageData(imageData, id: id)
@@ -207,13 +282,18 @@ final class BoardModel: ObservableObject {
     func move(_ id: UUID, to targetCategory: BoardCategory) {
         guard var item = items.first(where: { $0.id == id }),
               item.kind != .file, targetCategory != .files,
+              !isDeletedCategory(targetCategory),
               item.category != targetCategory
         else {
+            if isDeletedCategory(targetCategory) {
+                showStatus("目标分类已删除，请重新选择分类。")
+            }
             return
         }
         let sourceCategory = item.category
+        var evicted: [BoardItem] = []
 
-        _ = persistMutation(failureMessage: "移动未保存，请重试。") {
+        if persistMutation(failureMessage: "移动未保存，请重试。", {
             var sourceItems = orderedItems(in: sourceCategory)
             sourceItems.removeAll { $0.id == id }
             replaceCategory(sourceCategory, with: sourceItems)
@@ -225,15 +305,47 @@ final class BoardModel: ObservableObject {
                 : targetItems.firstIndex(where: { !$0.isPinned }) ?? targetItems.count
             targetItems.insert(item, at: insertionIndex)
             replaceCategory(targetCategory, with: targetItems)
+            if targetCategory == .inbox {
+                evicted = enforceInboxItemLimit()
+            }
+        }) {
+            cleanUpEvictedImages(evicted)
         }
     }
 
     @discardableResult
+    func reorderText(_ sourceID: UUID, relativeTo targetID: UUID, after: Bool = false) -> Bool {
+        guard sourceID != targetID,
+              let source = items.first(where: { $0.id == sourceID }),
+              source.kind == .text,
+              let target = items.first(where: { $0.id == targetID }),
+              source.category == target.category,
+              source.isPinned == target.isPinned
+        else {
+            return false
+        }
+
+        return persistMutation(failureMessage: "文字顺序未保存，请重试。") {
+            var categoryItems = orderedItems(in: source.category)
+            guard let sourceIndex = categoryItems.firstIndex(where: { $0.id == sourceID }) else { return }
+            categoryItems.remove(at: sourceIndex)
+            guard let targetIndex = categoryItems.firstIndex(where: { $0.id == targetID }) else { return }
+            categoryItems.insert(source, at: targetIndex + (after ? 1 : 0))
+            replaceCategory(source.category, with: categoryItems)
+        }
+    }
+
+    func reportTextReorderFailure() {
+        showStatus("文字排序未完成，请重新拖动。")
+    }
+
+    @discardableResult
     func copyImage(_ id: UUID, to targetCategory: BoardCategory) -> Bool {
+        let resolvedTarget = resolvedCategory(targetCategory)
         guard let source = items.first(where: { $0.id == id }),
               targetCategory != .files,
               source.kind == .image,
-              source.category != targetCategory,
+              source.category != resolvedTarget,
               let relativePath = source.imageRelativePath,
               let sourceURL = store.managedImageURL(relativePath: relativePath)
         else {
@@ -252,19 +364,23 @@ final class BoardModel: ObservableObject {
         let copiedItem = BoardItem(
             id: copyID,
             kind: .image,
-            category: targetCategory,
+            category: resolvedTarget,
             order: 0,
             imageRelativePath: copiedRelativePath,
             name: source.name
         )
-        guard persistMutation(failureMessage: "图片复制未保存，请重试。", {
-            insertAtTopOfNormalRegion([copiedItem], in: targetCategory)
-        }) else {
+        guard let retained = persistNewItems(
+            [copiedItem],
+            in: resolvedTarget,
+            failureMessage: "图片复制未保存，请重试。"
+        ) else {
             _ = store.deleteManagedImage(relativePath: copiedRelativePath)
             return false
         }
+        guard retained.contains(where: { $0.id == copyID }) else { return false }
 
-        showStatus("已复制到“\(displayName(for: targetCategory))”")
+        showStatus("已复制到“\(displayName(for: resolvedTarget))”")
+        notifyCopySuccessIfEnabled()
         return true
     }
 
@@ -343,6 +459,7 @@ final class BoardModel: ObservableObject {
         }
         lastPasteboardChangeCount = pasteboard.changeCount
         showStatus(successMessage)
+        notifyCopySuccessIfEnabled()
     }
 
     func dragProvider(for item: BoardItem, imageData: Data? = nil) -> NSItemProvider {
@@ -353,7 +470,16 @@ final class BoardModel: ObservableObject {
             provider.suggestedName = item.fileName ?? url.lastPathComponent
             return provider
         case .text:
-            return NSItemProvider(object: (item.text ?? "") as NSString)
+            let provider = NSItemProvider(object: (item.text ?? "") as NSString)
+            provider.suggestedName = "station-text-\(item.id.uuidString.lowercased())"
+            provider.registerDataRepresentation(
+                forTypeIdentifier: Self.textItemDragType,
+                visibility: .ownProcess
+            ) { completion in
+                completion(Data(item.id.uuidString.utf8), nil)
+                return nil
+            }
+            return provider
         case .image:
             guard let relativePath = item.imageRelativePath,
                   let managedURL = store.managedImageURL(relativePath: relativePath)
@@ -471,12 +597,13 @@ final class BoardModel: ObservableObject {
                     return
                 }
                 if self.persistMutation(failureMessage: "文件未保存，请重试。", {
-                    self.insertAtTopOfNormalRegion(results, in: .files)
+                    self.insertAtTopOfNormalRegion(self.assignArrivalSequences(to: results), in: .files)
                 }) {
                     self.completeFileImport()
                     self.showStatus(hadFailures
                         ? "已导入 \(results.count) 个文件；部分文件无法读取，文件夹和链接不支持。"
                         : "已导入 \(results.count) 个文件，原文件不变。")
+                    self.notifyCopySuccessIfEnabled()
                 } else {
                     self.fileImportQueue.async {
                         results.forEach {
@@ -516,7 +643,7 @@ final class BoardModel: ObservableObject {
     }
 
     func renameCategory(_ category: BoardCategory, to rawName: String) {
-        guard category != .files else { return }
+        guard category != .files, !isDeletedCategory(category) else { return }
         let name = String(rawName.prefix(6))
         let previous = settings
         settings.categoryNames[category.rawValue] = name
@@ -701,6 +828,7 @@ final class BoardModel: ObservableObject {
         }
         let previous = items
         mutation()
+        items = Self.projectDeletedCategories(items, deletedCategoryIDs: Set(settings.deletedCategoryIDs))
         items = Self.normalized(items)
         do {
             try store.saveBoard(items)
@@ -710,6 +838,42 @@ final class BoardModel: ObservableObject {
             showStatus(failureMessage)
             return false
         }
+    }
+
+    private func persistNewItems(
+        _ newItems: [BoardItem],
+        in requestedCategory: BoardCategory,
+        failureMessage: String
+    ) -> [BoardItem]? {
+        guard !boardWritesBlocked else {
+            showStatus(boardLoadWarning ?? "看板数据已保护，当前无法保存修改。")
+            return nil
+        }
+
+        let previous = items
+        let category = resolvedCategory(requestedCategory)
+        let inserted = assignArrivalSequences(to: newItems).map { item -> BoardItem in
+            var result = item
+            result.category = category
+            return result
+        }
+        insertAtTopOfNormalRegion(inserted, in: category)
+        items = Self.projectDeletedCategories(items, deletedCategoryIDs: Set(settings.deletedCategoryIDs))
+        items = Self.normalized(items)
+        let evicted = category == .inbox ? enforceInboxItemLimit() : []
+        items = Self.normalized(items)
+
+        do {
+            try store.saveBoard(items)
+        } catch {
+            items = previous
+            showStatus(failureMessage)
+            return nil
+        }
+
+        cleanUpEvictedImages(evicted)
+        let retainedIDs = Set(items.map(\.id))
+        return inserted.filter { retainedIDs.contains($0.id) }
     }
 
     private func enqueueImageImport(
@@ -747,10 +911,15 @@ final class BoardModel: ObservableObject {
                     self.showStatus("没有找到可用的图片。")
                     return
                 }
-                if self.persistMutation(failureMessage: "图片未保存，请重试。", {
-                    self.insertAtTopOfNormalRegion(importedItems, in: category)
-                }) {
-                    self.showStatus("已添加 \(importedItems.count) 张图片。")
+                if let retained = self.persistNewItems(
+                    importedItems,
+                    in: category,
+                    failureMessage: "图片未保存，请重试。"
+                ) {
+                    if !retained.isEmpty {
+                        self.showStatus("已添加 \(retained.count) 张图片。")
+                        self.notifyCopySuccessIfEnabled()
+                    }
                     return
                 }
                 queue.async {
@@ -771,6 +940,46 @@ final class BoardModel: ObservableObject {
         replaceCategory(category, with: categoryItems)
     }
 
+    private func enforceInboxItemLimit() -> [BoardItem] {
+        guard let limit = settings.inboxItemLimit else { return [] }
+        let unpinned = items.filter { $0.category == .inbox && !$0.isPinned }
+        let excessCount = unpinned.count - limit
+        guard excessCount > 0 else { return [] }
+
+        let evicted = Array(unpinned.sorted { left, right in
+            if left.createdAt != right.createdAt {
+                return left.createdAt < right.createdAt
+            }
+            guard let leftSequence = left.arrivalSequence,
+                  let rightSequence = right.arrivalSequence else {
+                return left.arrivalSequence == nil && right.arrivalSequence != nil
+            }
+            return leftSequence < rightSequence
+        }.prefix(excessCount))
+        let evictedIDs = Set(evicted.map(\.id))
+        items.removeAll { evictedIDs.contains($0.id) }
+        return evicted
+    }
+
+    private func cleanUpEvictedImages(_ evicted: [BoardItem]) {
+        let images = evicted.filter { $0.kind == .image }
+        guard !images.isEmpty else { return }
+
+        let imagePaths = images.compactMap(\.imageRelativePath)
+        let hasMissingPath = imagePaths.count != images.count
+        let store = self.store
+        fileImportQueue.async { [weak self] in
+            var failed = hasMissingPath
+            for relativePath in imagePaths where !store.deleteManagedImage(relativePath: relativePath) {
+                failed = true
+            }
+            guard failed else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.reportEvictedImageCleanupFailure()
+            }
+        }
+    }
+
     private func replaceCategory(_ category: BoardCategory, with replacements: [BoardItem]) {
         items.removeAll { $0.category == category }
         items.append(contentsOf: replacements.enumerated().map { index, item in
@@ -779,6 +988,76 @@ final class BoardModel: ObservableObject {
             replacement.order = index
             return replacement
         })
+    }
+
+    private func isDeletedCategory(_ category: BoardCategory) -> Bool {
+        category != .inbox
+            && category != .files
+            && settings.deletedCategoryIDs.contains(category.rawValue)
+    }
+
+    private func resolvedCategory(_ category: BoardCategory) -> BoardCategory {
+        isDeletedCategory(category) ? .inbox : category
+    }
+
+    private func assignArrivalSequences(to newItems: [BoardItem]) -> [BoardItem] {
+        var sequencesByTimestamp: [Int64: Set<Int64>] = [:]
+        for item in items {
+            guard let sequence = item.arrivalSequence else { continue }
+            let timestamp = Self.persistenceMillisecondKey(item.createdAt)
+            sequencesByTimestamp[timestamp, default: []].insert(sequence)
+        }
+        for item in newItems {
+            guard let sequence = item.arrivalSequence else { continue }
+            let timestamp = Self.persistenceMillisecondKey(item.createdAt)
+            sequencesByTimestamp[timestamp, default: []].insert(sequence)
+        }
+
+        return newItems.map { item in
+            var result = item
+            let timestamp = Self.persistenceMillisecondKey(item.createdAt)
+            result.createdAt = Self.dateAtPersistenceMillisecondIfRepresentable(timestamp, from: item.createdAt)
+            if result.arrivalSequence == nil {
+                var usedSequences = sequencesByTimestamp[timestamp, default: []]
+                result.arrivalSequence = Self.nextArrivalSequence(in: &usedSequences)
+                sequencesByTimestamp[timestamp] = usedSequences
+            }
+            return result
+        }
+    }
+
+    private static func nextArrivalSequence(in usedSequences: inout Set<Int64>) -> Int64 {
+        if usedSequences.isEmpty {
+            usedSequences.insert(0)
+            return 0
+        }
+        if let highest = usedSequences.max(), highest < Int64.max {
+            let next = highest + 1
+            usedSequences.insert(next)
+            return next
+        }
+
+        var candidate = Int64.min
+        while usedSequences.contains(candidate) {
+            guard candidate < Int64.max else { return Int64.max }
+            candidate += 1
+        }
+        usedSequences.insert(candidate)
+        return candidate
+    }
+
+    private func notifyCopySuccessIfEnabled() {
+        guard settings.successSoundEnabled else { return }
+        onCopySuccess?()
+    }
+
+    private func reportEvictedImageCleanupFailure() {
+        let warning = "待分类容量已更新，但部分已淘汰图片副本未能清理。"
+        let existing = statusText
+        if ["失败", "未保存", "无法", "请重试", "未能"].contains(where: { existing.contains($0) }) {
+            return
+        }
+        showStatus(existing.isEmpty ? warning : "\(existing)；\(warning)")
     }
 
     private func showStatus(_ message: String) {
@@ -804,6 +1083,119 @@ final class BoardModel: ObservableObject {
                     result.order = index
                     return result
                 }
+        }
+    }
+
+    private static func initializeArrivalSequences(_ source: [BoardItem]) -> [BoardItem] {
+        var result = source
+        var groupedIndices: [Int64: [Int]] = [:]
+        for (index, item) in source.enumerated() {
+            groupedIndices[persistenceMillisecondKey(item.createdAt), default: []].append(index)
+        }
+
+        let orderedCategories = (BoardCategory.visibleCases + source.map(\.category))
+        var categoryRanks: [BoardCategory: Int] = [:]
+        for category in orderedCategories where categoryRanks[category] == nil {
+            categoryRanks[category] = categoryRanks.count
+        }
+
+        for indices in groupedIndices.values {
+            let missingIndices = indices.filter { result[$0].arrivalSequence == nil }
+            guard !missingIndices.isEmpty else { continue }
+            let orderedIndices = indices.sorted { leftIndex, rightIndex in
+                let left = source[leftIndex]
+                let right = source[rightIndex]
+                let leftRank = categoryRanks[left.category] ?? Int.max
+                let rightRank = categoryRanks[right.category] ?? Int.max
+                if leftRank != rightRank { return leftRank < rightRank }
+                if left.order != right.order { return left.order < right.order }
+                return leftIndex < rightIndex
+            }
+
+            // Legacy records predate this field. Assign them stable values before
+            // the oldest existing sequence, preserving every sequence already on disk.
+            let existingSequences = Set(indices.compactMap { result[$0].arrivalSequence })
+            var usedSequences = existingSequences
+            let lowerBoundary = usedSequences.min() ?? 0
+            var previousBoundary = lowerBoundary
+            var precedingAssignments: [(index: Int, sequence: Int64)] = []
+            for index in orderedIndices.reversed() where result[index].arrivalSequence == nil {
+                guard let sequence = previousArrivalSequence(before: previousBoundary, used: usedSequences) else {
+                    break
+                }
+                precedingAssignments.append((index, sequence))
+                usedSequences.insert(sequence)
+                previousBoundary = sequence
+            }
+
+            if precedingAssignments.count == missingIndices.count {
+                for assignment in precedingAssignments {
+                    result[assignment.index].arrivalSequence = assignment.sequence
+                }
+            } else {
+                // The lower Int64 boundary may leave no room before existing values.
+                // In that rare case, allocate a fresh increasing run without changing
+                // any sequence that was already persisted.
+                usedSequences = existingSequences
+                let orderedMissingIndices = orderedIndices.filter { result[$0].arrivalSequence == nil }
+                for index in orderedMissingIndices {
+                    result[index].arrivalSequence = nextArrivalSequence(in: &usedSequences)
+                }
+            }
+        }
+        return result
+    }
+
+    private static func previousArrivalSequence(
+        before boundary: Int64,
+        used: Set<Int64>
+    ) -> Int64? {
+        var candidate = boundary
+        while candidate > Int64.min {
+            candidate -= 1
+            if !used.contains(candidate) { return candidate }
+        }
+        return nil
+    }
+
+    private static func persistenceMillisecondKey(_ date: Date) -> Int64 {
+        let milliseconds = (date.timeIntervalSince1970 * 1_000).rounded()
+        if milliseconds.isNaN { return 0 }
+        if milliseconds >= Double(Int64.max) { return .max }
+        if milliseconds <= Double(Int64.min) { return .min }
+        return Int64(milliseconds)
+    }
+
+    private static func dateAtPersistenceMillisecondIfRepresentable(
+        _ timestamp: Int64,
+        from originalDate: Date
+    ) -> Date {
+        let milliseconds = (originalDate.timeIntervalSince1970 * 1_000).rounded()
+        guard milliseconds.isFinite,
+              milliseconds > Double(Int64.min),
+              milliseconds < Double(Int64.max) else {
+            return originalDate
+        }
+        return date(atPersistenceMillisecond: timestamp)
+    }
+
+    private static func date(atPersistenceMillisecond timestamp: Int64) -> Date {
+        Date(timeIntervalSince1970: Double(timestamp) / 1_000)
+    }
+
+    private static func projectDeletedCategories(
+        _ source: [BoardItem],
+        deletedCategoryIDs: Set<String>
+    ) -> [BoardItem] {
+        let hiddenIDs = deletedCategoryIDs.subtracting(Set([
+            BoardCategory.inbox.rawValue,
+            BoardCategory.files.rawValue
+        ]))
+        return source.map { item in
+            guard item.kind != .file, hiddenIDs.contains(item.category.rawValue) else { return item }
+            var projected = item
+            projected.category = .inbox
+            return projected
         }
     }
 

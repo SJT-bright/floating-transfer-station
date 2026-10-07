@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var expandedOrigin = NSPoint.zero
     private var isProgrammaticTransition = false
     private var restartInProgress = false
+    private let successSound = NSSound(named: NSSound.Name("Pop"))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -24,6 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let model = BoardModel()
         self.model = model
+        successSound?.volume = 0.45
+        model.onCopySuccess = { [weak self] in
+            guard let sound = self?.successSound else { return }
+            // A new success gets its own short acknowledgement, without
+            // stacking multiple overlapping sounds for fast clipboard input.
+            if sound.isPlaying { sound.stop() }
+            sound.play()
+        }
         let settings = model.settings
         let savedPoint = NSPoint(x: settings.windowX ?? .greatestFiniteMagnitude, y: settings.windowY ?? .greatestFiniteMagnitude)
         let visibleFrame = NSScreen.screens.first(where: { $0.visibleFrame.contains(savedPoint) })?.visibleFrame ?? NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)

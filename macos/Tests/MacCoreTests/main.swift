@@ -36,7 +36,11 @@ enum MacCoreTests {
         try testFileImportCopiesAndPersistsOriginalBytes()
         try testFileStoreRejectsUnsafePaths()
         try testFileImportRollsBackFailedBoardSave()
-        print("macOS core tests passed (26 tests)")
+        try testBackupRecoveryPromotesBoardAndSettings()
+        try testRecoveryPromotionAndSaveFailureKeepValidBackup()
+        try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
+        try testBackupWriteFailureKeepsPrimaryAndBackup()
+        print("macOS core tests passed (30 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -847,4 +851,96 @@ enum MacCoreTests {
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
+    private static func testBackupRecoveryPromotesBoardAndSettings() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = AppPaths(dataDirectory: directory)
+        let store = LocalStore(paths: paths)
+        let item = BoardItem(kind: .text, category: .prompt, order: 0, text: "synthetic recovery")
+        try store.saveBoard([item])
+        try store.saveSettings(.default)
+        for primary in [paths.boardFile, paths.settingsFile] {
+            let good = try Data(contentsOf: primary)
+            try good.write(to: URL(fileURLWithPath: primary.path + ".bak"))
+            try Data("{broken".utf8).write(to: primary)
+            if primary == paths.boardFile {
+                try check(store.loadBoard().first?.id == item.id, "valid board backup not recovered")
+            } else {
+                _ = store.loadSettings()
+            }
+            let bytesMatch1 = try readBytes(primary) == good
+            try check(bytesMatch1, "recovery did not promote validated backup")
+            let bytesMatch2 = try readBytes(URL(fileURLWithPath: primary.path + ".bak")) == good
+            try check(bytesMatch2, "recovery changed valid backup")
+        }
+        try store.saveBoard([item])
+        try check(LocalStore(paths: paths).loadBoard().first?.id == item.id, "recovered board did not survive save/restart")
+    }
+
+    private static func testRecoveryPromotionAndSaveFailureKeepValidBackup() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = AppPaths(dataDirectory: directory)
+        let seed = LocalStore(paths: paths)
+        let item = BoardItem(kind: .text, category: .prompt, order: 0, text: "synthetic protected")
+        try seed.saveBoard([item])
+        let good = try Data(contentsOf: paths.boardFile)
+        let backup = URL(fileURLWithPath: paths.boardFile.path + ".bak")
+        try good.write(to: backup)
+        let bad = Data("{broken".utf8)
+        try bad.write(to: paths.boardFile)
+        let blocked = LocalStore(paths: paths, writeData: { bytes, url in
+            if url == paths.boardFile { throw TestFailure(description: "synthetic primary write failure") }
+            try bytes.write(to: url, options: .atomic)
+        })
+        try check(blocked.loadBoard().first?.id == item.id, "failed promotion blocked valid backup read")
+        do { try blocked.saveBoard([item]); throw TestFailure(description: "save unexpectedly succeeded") }
+        catch let failure as TestFailure { try check(failure.description == "synthetic primary write failure", "wrong save failure") }
+        let bytesMatch3 = try readBytes(backup) == good
+        try check(bytesMatch3, "failed save replaced valid backup with corrupt primary")
+        let bytesMatch4 = try readBytes(paths.boardFile) == bad
+        try check(bytesMatch4, "failed save changed primary")
+        try check(LocalStore(paths: paths).loadBoard().first?.id == item.id, "backup could not recover after failed save")
+    }
+
+    private static func testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = AppPaths(dataDirectory: directory)
+        let item = BoardItem(kind: .text, category: .prompt, order: 0, text: "synthetic old")
+        try LocalStore(paths: paths).saveBoard([item])
+        let good = try Data(contentsOf: paths.boardFile)
+        let backup = URL(fileURLWithPath: paths.boardFile.path + ".bak")
+        try good.write(to: backup)
+        try Data("{broken".utf8).write(to: paths.boardFile)
+        let next = BoardItem(kind: .text, category: .prompt, order: 0, text: "synthetic new")
+        try LocalStore(paths: paths).saveBoard([next])
+        let bytesMatch5 = try readBytes(backup) == good
+        try check(bytesMatch5, "save without load destroyed last valid backup")
+        try check(LocalStore(paths: paths).loadBoard().first?.id == next.id, "new board did not persist")
+    }
+
+    private static func testBackupWriteFailureKeepsPrimaryAndBackup() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = AppPaths(dataDirectory: directory)
+        let item = BoardItem(kind: .text, category: .prompt, order: 0, text: "synthetic original")
+        let seed = LocalStore(paths: paths)
+        try seed.saveBoard([item]); try seed.saveBoard([item])
+        let backup = URL(fileURLWithPath: paths.boardFile.path + ".bak")
+        let primaryBefore = try Data(contentsOf: paths.boardFile)
+        let backupBefore = try Data(contentsOf: backup)
+        let blocked = LocalStore(paths: paths, writeData: { bytes, url in
+            if url == backup { throw TestFailure(description: "synthetic backup write failure") }
+            try bytes.write(to: url, options: .atomic)
+        })
+        do { try blocked.saveBoard([]); throw TestFailure(description: "save unexpectedly succeeded") }
+        catch let failure as TestFailure { try check(failure.description == "synthetic backup write failure", "wrong backup failure") }
+        let bytesMatch6 = try readBytes(paths.boardFile) == primaryBefore
+        try check(bytesMatch6, "backup failure changed primary")
+        let bytesMatch7 = try readBytes(backup) == backupBefore
+        try check(bytesMatch7, "backup failure deleted old backup")
+    }
+    private static func readBytes(_ url: URL) throws -> Data { try Data(contentsOf: url) }
+
 }

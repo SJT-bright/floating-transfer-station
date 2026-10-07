@@ -49,10 +49,18 @@ final class LocalStore {
     let paths: AppPaths
 
     private let fileManager: FileManager
+    private let writeData: (Data, URL) throws -> Void
 
-    init(paths: AppPaths = .default, fileManager: FileManager = .default) {
+    init(
+        paths: AppPaths = .default,
+        fileManager: FileManager = .default,
+        writeData: @escaping (Data, URL) throws -> Void = { data, url in
+            try data.write(to: url, options: .atomic)
+        }
+    ) {
         self.paths = paths
         self.fileManager = fileManager
+        self.writeData = writeData
     }
 
     func loadBoard() -> [BoardItem] {
@@ -345,13 +353,22 @@ final class LocalStore {
 
         let backupURL = URL(fileURLWithPath: primaryURL.path + ".bak")
         do {
-            return try decode(Value.self, from: backupURL)
+            let bytes = try Data(contentsOf: backupURL)
+            let recovered = try decode(Value.self, data: bytes)
+            // 晋升已验证备份，不能让下一次保存把损坏主库复制回良好备份。
+            // 晋升失败仍可读取备份；atomicWrite会重新校验主库，保护最后恢复点。
+            try? writeData(bytes, primaryURL)
+            return recovered
         } catch {
             return fallback
         }
     }
 
     private func decode<Value: Decodable>(_ type: Value.Type, from url: URL) throws -> Value {
+        try decode(type, data: Data(contentsOf: url))
+    }
+
+    private func decode<Value: Decodable>(_ type: Value.Type, data: Data) throws -> Value {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .custom { decoder in
             let container = try decoder.singleValueContainer()
@@ -374,7 +391,7 @@ final class LocalStore {
                 debugDescription: "Invalid ISO-8601 date: \(value)"
             )
         }
-        return try decoder.decode(type, from: Data(contentsOf: url))
+        return try decoder.decode(type, from: data)
     }
 
     private func encode<Value: Encodable>(_ value: Value) throws -> Data {
@@ -396,14 +413,22 @@ final class LocalStore {
         )
 
         if fileManager.fileExists(atPath: url.path) {
-            let backupURL = URL(fileURLWithPath: url.path + ".bak")
-            if fileManager.fileExists(atPath: backupURL.path) {
-                try fileManager.removeItem(at: backupURL)
+            let previous = try Data(contentsOf: url)
+            let valid: Bool
+            if url == paths.boardFile {
+                valid = (try? decode(BoardSnapshot.self, data: previous)) != nil
+            } else {
+                valid = (try? decode(WindowSettings.self, data: previous)) != nil
             }
-            try fileManager.copyItem(at: url, to: backupURL)
+            if valid {
+                let backupURL = URL(fileURLWithPath: url.path + ".bak")
+                try writeData(previous, backupURL)
+            } else {
+                preserveCorruptFile(url)
+            }
         }
 
-        try data.write(to: url, options: .atomic)
+        try writeData(data, url)
     }
 
     private func preserveCorruptFile(_ url: URL) {

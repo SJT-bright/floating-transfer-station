@@ -94,20 +94,26 @@ private struct StationHoverTracker: NSViewRepresentable {
 
     func updateNSView(_ view: TrackingView, context: Context) {
         view.onChange = onChange
+        view.synchronizeHoverState()
     }
 
     final class TrackingView: NSView {
         var onChange: ((Bool) -> Void)?
         private var hovering = false
+        private var callbackGeneration: UInt64 = 0
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
             trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(NSTrackingArea(rect: .zero,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag],
-                owner: self, userInfo: nil))
+            let hoverRect = bounds.intersection(visibleRect)
+            if !hoverRect.isEmpty {
+                addTrackingArea(NSTrackingArea(rect: hoverRect,
+                    options: [.mouseEnteredAndExited, .activeAlways, .enabledDuringMouseDrag],
+                    owner: self, userInfo: nil))
+            }
+            synchronizeHoverState()
         }
 
         override func mouseEntered(with event: NSEvent) { setHovered(true) }
@@ -118,11 +124,37 @@ private struct StationHoverTracker: NSViewRepresentable {
             super.viewWillMove(toWindow: newWindow)
         }
 
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            synchronizeHoverState()
+        }
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            if superview == nil { setHovered(false) }
+            else { synchronizeHoverState() }
+        }
+
+        func synchronizeHoverState() {
+            guard let window else {
+                setHovered(false)
+                return
+            }
+            let mousePoint = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let hoverRect = bounds.intersection(visibleRect)
+            setHovered(!hoverRect.isEmpty && hoverRect.contains(mousePoint))
+        }
+
         private func setHovered(_ value: Bool) {
             guard hovering != value else { return }
             hovering = value
+            callbackGeneration &+= 1
+            let generation = callbackGeneration
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.hovering == value else { return }
+                guard let self,
+                      self.callbackGeneration == generation,
+                      self.hovering == value
+                else { return }
                 self.onChange?(value)
             }
         }
@@ -134,22 +166,31 @@ private struct StationHoverEffect: ViewModifier {
     var isActive = false
     var cornerRadius: CGFloat = 11
     var highlightPadding: CGFloat = 3
+    var neutralHover = false
+    var activeHighlightOpacity = 0.22
+    var activeStrokeOpacity = 0.45
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     func body(content: Content) -> some View {
-        let highlighted = (isHovered || isActive) && isEnabled
+        let active = isActive && isEnabled
+        let neutralHighlight = neutralHover && isHovered && !active && isEnabled
+        let accentHover = !neutralHover && isHovered && !active && isEnabled
+        let highlighted = (isHovered || active) && isEnabled
         content
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.accentColor.opacity(highlighted ? 0.22 : 0))
+                    .fill(active
+                        ? Color.accentColor.opacity(activeHighlightOpacity)
+                        : neutralHighlight ? Color.primary.opacity(0.08)
+                        : accentHover ? Color.accentColor.opacity(0.22) : Color.clear)
                     .padding(-highlightPadding)
                     .allowsHitTesting(false)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.white.opacity(highlighted ? 0.45 : 0), lineWidth: 0.8)
+                    .stroke(Color.white.opacity(highlighted && !neutralHighlight ? activeStrokeOpacity : 0), lineWidth: 0.8)
                     .padding(-highlightPadding)
                     .allowsHitTesting(false)
             }
@@ -168,13 +209,165 @@ private struct StationHoverEffect: ViewModifier {
 private struct StationButtonStyle: ButtonStyle {
     var cornerRadius: CGFloat = 11
     var highlightPadding: CGFloat = 3
+    var neutralHover = false
+    var activeHighlightOpacity = 0.22
+    var activeStrokeOpacity = 0.45
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .modifier(StationHoverEffect(isPressed: configuration.isPressed,
-                cornerRadius: cornerRadius, highlightPadding: highlightPadding))
+                cornerRadius: cornerRadius, highlightPadding: highlightPadding,
+                neutralHover: neutralHover, activeHighlightOpacity: activeHighlightOpacity,
+                activeStrokeOpacity: activeStrokeOpacity))
             .opacity(isEnabled ? 1 : 0.4)
+    }
+}
+
+private struct TextDragSurface: NSViewRepresentable {
+    let itemID: UUID
+    let text: String
+    let name: String
+    var onClick: (() -> Void)? = nil
+    @Binding var activeTextDragID: UUID?
+
+    func makeNSView(context: Context) -> TextDragSurfaceView {
+        let view = TextDragSurfaceView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.clear.cgColor
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ view: TextDragSurfaceView, context: Context) {
+        update(view)
+    }
+
+    private func update(_ view: TextDragSurfaceView) {
+        view.itemID = itemID
+        view.text = text
+        view.name = name
+        view.onClick = onClick
+        view.onDragStarted = { id in activeTextDragID = id }
+        view.onDragEnded = { id in
+            if activeTextDragID == id { activeTextDragID = nil }
+        }
+    }
+}
+
+private final class TextDragSurfaceView: NSView, NSDraggingSource {
+    var itemID = UUID()
+    var text = ""
+    var name = ""
+    var onClick: (() -> Void)?
+    var onDragStarted: ((UUID) -> Void)?
+    var onDragEnded: ((UUID) -> Void)?
+
+    private var mouseDownEvent: NSEvent?
+    private var mouseDownPoint = NSPoint.zero
+    private var dragThresholdCrossed = false
+    private var activeDragID: UUID?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func shouldDelayWindowOrdering(for event: NSEvent) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, let superview else { return nil }
+        let localPoint = convert(point, from: superview)
+        return bounds.contains(localPoint) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        mouseDownEvent = event
+        mouseDownPoint = convert(event.locationInWindow, from: nil)
+        dragThresholdCrossed = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard !dragThresholdCrossed, let mouseDownEvent else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let dx = point.x - mouseDownPoint.x
+        let dy = point.y - mouseDownPoint.y
+        guard hypot(dx, dy) >= 3 else { return }
+        dragThresholdCrossed = true
+        beginTextDrag(using: mouseDownEvent)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if !dragThresholdCrossed { onClick?() }
+        mouseDownEvent = nil
+        dragThresholdCrossed = false
+    }
+
+    private func beginTextDrag(using event: NSEvent) {
+        let pasteboardItem = NSPasteboardItem()
+        let privateType = NSPasteboard.PasteboardType(BoardModel.textItemDragType)
+        guard pasteboardItem.setString(text, forType: .string),
+              pasteboardItem.setData(Data(itemID.uuidString.lowercased().utf8), forType: privateType),
+              window != nil
+        else { return }
+
+        activeDragID = itemID
+        onDragStarted?(itemID)
+
+        let preview = makePreview()
+        let previewSize = preview.size
+        let previewFrame = NSRect(
+            x: mouseDownPoint.x - previewSize.width / 2,
+            y: mouseDownPoint.y - previewSize.height / 2,
+            width: previewSize.width,
+            height: previewSize.height
+        )
+        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        draggingItem.setDraggingFrame(previewFrame, contents: preview)
+        let session = beginDraggingSession(with: [draggingItem], event: event, source: self)
+        session.draggingFormation = .none
+        session.animatesToStartingPositionsOnCancelOrFail = true
+    }
+
+    private func makePreview() -> NSImage {
+        let size = NSSize(width: 144, height: 28)
+        let title = name.isEmpty ? "文字" : "文字 · \(name)"
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.labelColor
+        ]
+        return NSImage(size: size, flipped: false) { rect in
+            let shape = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
+            NSColor.windowBackgroundColor.withAlphaComponent(0.94).setFill()
+            shape.fill()
+            NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
+            shape.lineWidth = 1
+            shape.stroke()
+            (title as NSString).draw(in: rect.insetBy(dx: 9, dy: 5), withAttributes: attributes)
+            return true
+        }
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        sourceOperationMaskFor context: NSDraggingContext
+    ) -> NSDragOperation {
+        context == .withinApplication ? .move : .copy
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        finishTextDrag()
+    }
+
+    private func finishTextDrag() {
+        if let activeDragID {
+            onDragEnded?(activeDragID)
+        }
+        activeDragID = nil
+        mouseDownEvent = nil
     }
 }
 
@@ -188,11 +381,14 @@ struct ContentView: View {
     @State private var isRenaming = false
     @State private var renameDraft = ""
     @State private var confirmsClear = false
+    @State private var confirmsCategoryDeletion = false
+    @State private var categoryToDelete: BoardCategory?
     @State private var dropTargetCategory: BoardCategory?
     @State private var isAddingCategory = false
     @State private var newCategoryName = ""
     @State private var showsAppearance = false
     @State private var searchQuery = ""
+    @State private var activeTextDragID: UUID?
     @State private var boardPage = 0
 
     private var isSearching: Bool {
@@ -232,8 +428,18 @@ struct ContentView: View {
         .contentShape(Rectangle())
         .foregroundStyle(textColor)
         .onHover(perform: presentation.handleHover)
-        .onChange(of: model.activeCategory) { _ in boardPage = 0 }
-        .onChange(of: searchQuery) { _ in boardPage = 0 }
+        .onChange(of: model.activeCategory) { _ in
+            boardPage = 0
+            dropTargetCategory = nil
+        }
+        .onChange(of: searchQuery) { _ in
+            boardPage = 0
+            dropTargetCategory = nil
+        }
+        .onChange(of: presentation.isExpanded) { isExpanded in
+            if !isExpanded { dropTargetCategory = nil }
+        }
+        .onDisappear { dropTargetCategory = nil }
         .onTapGesture {
             if !presentation.isExpanded {
                 presentation.handleHover(true)
@@ -297,13 +503,22 @@ struct ContentView: View {
                     tint: .black, tintOpacity: 0.08))
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
+                if isSearching {
+                    Text("搜索总览只查看；请进入同一分类上下拖动文字排序。")
+                        .font(.caption2)
+                        .foregroundStyle(textColor.opacity(0.72))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                }
                 Divider()
                 board
                 statusBar
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onDrop(
-                of: [UTType.fileURL.identifier, UTType.image.identifier, UTType.plainText.identifier],
+                of: [UTType.fileURL.identifier, UTType.image.identifier, UTType.plainText.identifier,
+                     BoardModel.textItemDragType],
                 delegate: BoardDropDelegate(model: model, category: model.activeCategory)
             )
 
@@ -339,6 +554,18 @@ struct ContentView: View {
             }
         } message: {
             Text("只删除当前分类中未置顶的内容及站内副本。置顶内容会保留，导入前的原文件不受影响。")
+        }
+        .alert("删除分类？", isPresented: $confirmsCategoryDeletion) {
+            Button("取消", role: .cancel) { categoryToDelete = nil }
+            Button("删除分类", role: .destructive) {
+                if let categoryToDelete {
+                    _ = model.deleteCategory(categoryToDelete)
+                }
+                categoryToDelete = nil
+            }
+        } message: {
+            let name = categoryToDelete.map { model.displayName(for: $0) } ?? "此分类"
+            Text("删除“\(name)”后，其中的文字和图片会迁回“待分类”。素材不会被永久删除。")
         }
     }
 
@@ -394,8 +621,8 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "circle.lefthalf.filled")
             }
-            .help("外观设置：文字与背景")
-            .accessibilityLabel("外观设置")
+            .help("设置：外观、成功音效、待分类容量")
+            .accessibilityLabel("设置")
             .popover(isPresented: $showsAppearance, arrowEdge: .leading) {
                 AppearanceEditor(model: model)
                     .foregroundStyle(Color.primary)
@@ -509,7 +736,8 @@ struct ContentView: View {
                                 .foregroundStyle(.quaternary)
                                 .padding(.horizontal, 4)
                             }
-                            ItemCard(model: model, item: item, showsCategory: isSearching)
+                            ItemCard(model: model, item: item, showsCategory: isSearching,
+                                     activeTextDragID: $activeTextDragID)
                         }
                     }
                     .padding(7)
@@ -593,6 +821,9 @@ struct ContentView: View {
     private var categoryButtons: some View {
         VStack(spacing: 6) {
             ForEach(model.categories.filter { $0 != .files }) { category in
+                let isDropTarget = dropTargetCategory == category
+                let isSelected = dropTargetCategory == nil && model.activeCategory == category
+                let isHighlighted = isDropTarget || isSelected
                 Button {
                     searchQuery = ""
                     model.selectCategory(category)
@@ -620,21 +851,23 @@ struct ContentView: View {
                     .padding(.vertical, 5)
                     .background(
                         StationGlassLens(cornerRadius: 8,
-                            strength: reduceTransparency || (dropTargetCategory != category && model.activeCategory != category)
+                            strength: reduceTransparency || !isHighlighted
                                 ? 0 : appearance.glassIntensity,
                             tint: .accentColor,
-                            tintOpacity: dropTargetCategory == category ? 0.42
-                                : model.activeCategory == category ? 0.26 : 0)
+                            tintOpacity: isDropTarget ? 0.42 : isSelected ? 0.26 : 0)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(dropTargetCategory == category ? Color.accentColor.opacity(0.9) : .clear,
+                            .stroke(isDropTarget ? Color.accentColor.opacity(0.9) : .clear,
                                     lineWidth: 2)
                     )
                     .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
-                .buttonStyle(StationButtonStyle(cornerRadius: 8, highlightPadding: 0))
-                .scaleEffect(dropTargetCategory == category ? 1.03 : 1)
+                .buttonStyle(.plain)
+                .modifier(StationHoverEffect(isActive: isHighlighted,
+                    cornerRadius: 8, highlightPadding: 0, neutralHover: true,
+                    activeHighlightOpacity: 0, activeStrokeOpacity: 0))
+                .scaleEffect(isDropTarget ? 1.03 : 1)
                 .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
                 .onDrop(
                     of: [UTType.fileURL.identifier],
@@ -650,13 +883,23 @@ struct ContentView: View {
                         renameDraft = model.displayName(for: category)
                         isRenaming = true
                     }
+                    Divider()
+                    Button("删除分类", role: .destructive) {
+                        categoryToDelete = category
+                        confirmsCategoryDeletion = true
+                    }
+                    .disabled(!model.canDeleteCategory(category))
                 }
             }
         }
         .padding(.vertical, 4)
     }
 
+    @ViewBuilder
     private var fileStationButton: some View {
+        let isDropTarget = dropTargetCategory == .files
+        let isSelected = dropTargetCategory == nil && model.activeCategory == .files
+        let isHighlighted = isDropTarget || isSelected
         Button {
             searchQuery = ""
             model.selectCategory(.files)
@@ -675,17 +918,19 @@ struct ContentView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
             .background(StationGlassLens(cornerRadius: 8,
-                strength: reduceTransparency || (dropTargetCategory != .files && model.activeCategory != .files)
+                strength: reduceTransparency || !isHighlighted
                     ? 0 : appearance.glassIntensity,
                 tint: .accentColor,
-                tintOpacity: dropTargetCategory == .files ? 0.42
-                    : model.activeCategory == .files ? 0.26 : 0))
+                tintOpacity: isDropTarget ? 0.42 : isSelected ? 0.26 : 0))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(
-                dropTargetCategory == .files ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
+                isDropTarget ? Color.accentColor.opacity(0.9) : .clear, lineWidth: 2
             ))
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .buttonStyle(StationButtonStyle(cornerRadius: 8, highlightPadding: 0))
+        .buttonStyle(.plain)
+        .modifier(StationHoverEffect(isActive: isHighlighted,
+            cornerRadius: 8, highlightPadding: 0, neutralHover: true,
+            activeHighlightOpacity: 0, activeStrokeOpacity: 0))
         .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
         .accessibilityLabel("文件中转站")
         .help("导入或拖入文件，保留原文件")
@@ -714,9 +959,46 @@ private struct AppearanceEditor: View {
     @ObservedObject var model: BoardModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var inboxLimitEnabled = false
+    @State private var inboxLimitDraft = ""
+    @State private var inboxLimitMessage: String?
 
     private var appearance: PanelAppearance {
         model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
+    }
+
+    private var parsedInboxLimit: Int? {
+        let value = inboxLimitDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty,
+              value.unicodeScalars.allSatisfy({ $0.value >= 48 && $0.value <= 57 }),
+              let limit = Int(value),
+              limit > 0
+        else { return nil }
+        return limit
+    }
+
+    private func syncInboxLimitDraft() {
+        inboxLimitEnabled = model.settings.inboxItemLimit != nil
+        inboxLimitDraft = model.settings.inboxItemLimit.map(String.init) ?? ""
+        inboxLimitMessage = nil
+    }
+
+    private func saveInboxLimit() {
+        let limit: Int?
+        if inboxLimitEnabled {
+            guard let parsedInboxLimit else {
+                inboxLimitMessage = "请输入大于 0 的正整数后再保存。"
+                return
+            }
+            limit = parsedInboxLimit
+        } else {
+            limit = nil
+        }
+
+        model.setInboxItemLimit(limit)
+        inboxLimitMessage = model.settings.inboxItemLimit == limit
+            ? (limit.map { "已保存上限：\($0) 条。" } ?? "已保存为无限制。")
+            : "设置未保存，请查看中转站状态提示后重试。"
     }
 
     private func control(_ title: String, key: WritableKeyPath<PanelAppearance, Double>,
@@ -742,36 +1024,189 @@ private struct AppearanceEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("外观设置").font(.headline)
-            control("文字深浅", key: \.textBrightness, ends: "左侧黑色 · 右侧白色")
-            control("文字不透明度", key: \.textOpacity, range: 0.2...1, ends: "左侧淡 · 右侧清晰")
-            Divider()
-            control("背景深浅", key: \.backgroundBrightness, ends: "左侧黑色 · 右侧白色")
-            control("背景不透明度", key: \.backgroundOpacity, ends: "左侧透明 · 右侧实色")
-            Divider()
-            Group {
-                control("液态玻璃强度", key: \.glassIntensity, ends: "左侧关闭 · 右侧折射与弧面亮边增强")
-            }
-            .disabled(reduceTransparency)
-            if reduceTransparency {
-                Text("系统已开启降低透明度，材质效果暂不显示。")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("设置与外观").font(.headline)
+                control("文字深浅", key: \.textBrightness, ends: "左侧黑色 · 右侧白色")
+                control("文字不透明度", key: \.textOpacity, range: 0.2...1, ends: "左侧淡 · 右侧清晰")
+                Divider()
+                control("背景深浅", key: \.backgroundBrightness, ends: "左侧黑色 · 右侧白色")
+                control("背景不透明度", key: \.backgroundOpacity, ends: "左侧透明 · 右侧实色")
+                Divider()
+                Group {
+                    control("液态玻璃强度", key: \.glassIntensity, ends: "左侧关闭 · 右侧折射与弧面亮边增强")
+                }
+                .disabled(reduceTransparency)
+                if reduceTransparency {
+                    Text("系统已开启降低透明度，材质效果暂不显示。")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("清透玻璃，不叠加磨砂。降低背景不透明度可看见背后的颜色；macOS 26 支持原生折射，旧系统保留透明亮边。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Text("实时生效并自动保存，图片保持原样。")
                     .font(.caption).foregroundStyle(.secondary)
-            } else {
-                Text("清透玻璃，不叠加磨砂。降低背景不透明度可看见背后的颜色；macOS 26 支持原生折射，旧系统保留透明亮边。")
-                    .font(.caption).foregroundStyle(.secondary)
+                Button("使用液态玻璃预设") { model.updateAppearance(.liquidGlass) }
+                    .buttonStyle(.bordered)
+                    .modifier(StationHoverEffect())
+                Button("恢复系统默认") { model.updateAppearance(nil) }
+                    .buttonStyle(.bordered)
+                    .modifier(StationHoverEffect())
+
+                Divider()
+                Text("复制与待分类").font(.subheadline.weight(.semibold))
+                Toggle("复制成功时播放提示音", isOn: Binding(
+                    get: { model.settings.successSoundEnabled },
+                    set: { model.setSuccessSoundEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .accessibilityLabel("复制成功时播放提示音")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle("限制待分类数量", isOn: $inboxLimitEnabled)
+                        .accessibilityLabel("限制待分类数量")
+                    HStack(spacing: 8) {
+                        if inboxLimitEnabled {
+                            TextField("正整数", text: $inboxLimitDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 100)
+                                .onChange(of: inboxLimitDraft) { _ in inboxLimitMessage = nil }
+                                .onSubmit(saveInboxLimit)
+                            Text("条")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Label("无限制", systemImage: "infinity")
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Button("保存容量", action: saveInboxLimit)
+                            .buttonStyle(.bordered)
+                            .disabled(inboxLimitEnabled && parsedInboxLimit == nil)
+                    }
+                    if inboxLimitEnabled && parsedInboxLimit == nil {
+                        Text("请输入大于 0 的正整数。")
+                            .font(.caption).foregroundStyle(.red)
+                    }
+                    Text("保存后不立即清理已有内容；下次新增时按先进先出淘汰未置顶项，置顶项不占额度。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if let inboxLimitMessage {
+                        Text(inboxLimitMessage)
+                            .font(.caption)
+                            .foregroundStyle(inboxLimitMessage.hasPrefix("设置未保存")
+                                ? Color.red : Color(nsColor: .secondaryLabelColor))
+                    }
+                }
             }
-            Text("实时生效并自动保存，图片保持原样。").font(.caption).foregroundStyle(.secondary)
-            Button("使用液态玻璃预设") { model.updateAppearance(.liquidGlass) }
-                .buttonStyle(.bordered)
-                .modifier(StationHoverEffect())
-            Button("恢复系统默认") { model.updateAppearance(nil) }
-                .buttonStyle(.bordered)
-                .modifier(StationHoverEffect())
+            .padding(20)
         }
-        .padding(20)
-        .frame(width: 300)
+        .frame(width: 320, height: 440)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear(perform: syncInboxLimitDraft)
+    }
+}
+
+private struct ItemCardHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private enum TextDropEdge: Equatable {
+    case above
+    case below
+}
+
+private struct TextReorderDropDelegate: DropDelegate {
+    let model: BoardModel
+    let target: BoardItem
+    let sortingEnabled: Bool
+    let targetHeight: CGFloat
+    @Binding var activeTextDragID: UUID?
+    @Binding var highlightedEdge: TextDropEdge?
+
+    private func internalTextProvider(from info: DropInfo) -> (provider: NSItemProvider, id: UUID)? {
+        guard sortingEnabled,
+              target.kind == .text || target.kind == .image,
+              let provider = info.itemProviders(for: [BoardModel.textItemDragType]).first,
+              let id = activeTextDragID,
+              id != target.id,
+              let source = model.items.first(where: { $0.id == id }),
+              source.kind == .text,
+              source.category == target.category,
+              source.isPinned == target.isPinned
+        else {
+            return nil
+        }
+        return (provider, id)
+    }
+
+    private func edge(at location: CGPoint) -> TextDropEdge {
+        location.y >= max(targetHeight, 1) / 2 ? .below : .above
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        internalTextProvider(from: info) != nil
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard validateDrop(info: info) else { return }
+        highlightedEdge = edge(at: info.location)
+    }
+
+    func dropExited(info: DropInfo) {
+        highlightedEdge = nil
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard validateDrop(info: info) else {
+            highlightedEdge = nil
+            return nil
+        }
+        highlightedEdge = edge(at: info.location)
+        return DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let (provider, sourceID) = internalTextProvider(from: info) else {
+            highlightedEdge = nil
+            return false
+        }
+        let targetID = target.id
+        let targetCategory = target.category
+        let targetIsPinned = target.isPinned
+        let insertionEdge = edge(at: info.location)
+        activeTextDragID = nil
+        highlightedEdge = nil
+
+        provider.loadDataRepresentation(forTypeIdentifier: BoardModel.textItemDragType) { data, error in
+            guard error == nil,
+                  let data,
+                  let rawID = String(data: data, encoding: .utf8),
+                  let loadedID = UUID(uuidString: rawID),
+                  loadedID == sourceID
+            else {
+                DispatchQueue.main.async { model.reportTextReorderFailure() }
+                return
+            }
+
+            DispatchQueue.main.async {
+                guard let currentSource = model.items.first(where: { $0.id == loadedID }),
+                      currentSource.kind == .text,
+                      currentSource.category == targetCategory,
+                      currentSource.isPinned == targetIsPinned
+                else {
+                    model.reportTextReorderFailure()
+                    return
+                }
+                guard model.reorderText(loadedID, relativeTo: targetID, after: insertionEdge == .below) else {
+                    model.reportTextReorderFailure()
+                    return
+                }
+            }
+        }
+        return true
     }
 }
 
@@ -779,8 +1214,11 @@ private struct ItemCard: View {
     @ObservedObject var model: BoardModel
     let item: BoardItem
     var showsCategory = false
+    @Binding var activeTextDragID: UUID?
     @State private var showsFullText = false
     @State private var isTextExpanded = false
+    @State private var measuredCardHeight: CGFloat = 0
+    @State private var textDropEdge: TextDropEdge?
     @State private var nameDraft = ""
     @State private var isRenamingItem = false
     @FocusState private var isEditingName: Bool
@@ -803,14 +1241,36 @@ private struct ItemCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                Label(
-                    item.kind == .file ? "文件" : item.kind == .image ? "图片" : "文字",
-                    systemImage: item.kind == .file ? "doc" : item.kind == .image ? "photo" : "text.alignleft"
-                )
-                .font(.caption)
-                .foregroundStyle(textColor.opacity(0.75))
-                .onDrag { model.dragProvider(for: item) }
-                .help("拖动原始内容到其他应用")
+                Group {
+                    if item.kind == .text {
+                        Label("文字", systemImage: "text.alignleft")
+                            .font(.caption)
+                            .foregroundStyle(textColor.opacity(0.75))
+                            .overlay {
+                                TextDragSurface(
+                                    itemID: item.id,
+                                    text: item.text ?? "",
+                                    name: item.name ?? "",
+                                    activeTextDragID: $activeTextDragID
+                                )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .contentShape(Rectangle())
+                                .allowsHitTesting(true)
+                                .accessibilityHidden(true)
+                            }
+                    } else {
+                        Label(
+                            item.kind == .file ? "文件" : "图片",
+                            systemImage: item.kind == .file ? "doc" : "photo"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(textColor.opacity(0.75))
+                        .onDrag { model.dragProvider(for: item) }
+                    }
+                }
+                .help(item.kind == .text
+                    ? "拖动“文字”标签或名称可在同一分类、同一置顶分区上下排序；拖到其他应用会输出全文。"
+                    : "拖动原始内容到其他应用")
 
                 Spacer()
 
@@ -874,6 +1334,20 @@ private struct ItemCard: View {
                                 .lineLimit(1)
                         }
                         .buttonStyle(StationButtonStyle())
+                        .overlay {
+                            TextDragSurface(
+                                itemID: item.id,
+                                text: item.text ?? "",
+                                name: name,
+                                onClick: { isTextExpanded.toggle() },
+                                activeTextDragID: $activeTextDragID
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .allowsHitTesting(true)
+                            .accessibilityHidden(true)
+                        }
+                        .help("点击展开；拖动名称可调整同分类、同一置顶分区内的顺序。")
                         .accessibilityLabel(isTextExpanded ? "收起\(name)" : "展开\(name)")
                     } else {
                         Text(name).lineLimit(1)
@@ -1006,6 +1480,32 @@ private struct ItemCard: View {
             y: 4
         )
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: ItemCardHeightPreferenceKey.self, value: geometry.size.height)
+            }
+        }
+        .onPreferenceChange(ItemCardHeightPreferenceKey.self) { measuredCardHeight = $0 }
+        .onDrop(of: [BoardModel.textItemDragType], delegate: TextReorderDropDelegate(
+            model: model,
+            target: item,
+            sortingEnabled: !showsCategory,
+            targetHeight: measuredCardHeight,
+            activeTextDragID: $activeTextDragID,
+            highlightedEdge: $textDropEdge
+        ))
+        .overlay(alignment: .top) {
+            if (item.kind == .text || item.kind == .image) && !showsCategory && textDropEdge == .above {
+                Capsule().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 12).offset(y: -1)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if (item.kind == .text || item.kind == .image) && !showsCategory && textDropEdge == .below {
+                Capsule().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 12).offset(y: 1)
+                    .allowsHitTesting(false)
+            }
+        }
         .contextMenu {
             Button(item.isPinned ? "取消置顶" : "置顶") {
                 model.togglePinned(item.id)
@@ -1132,6 +1632,7 @@ private struct BoardDropDelegate: DropDelegate {
     let category: BoardCategory
 
     func validateDrop(info: DropInfo) -> Bool {
+        guard !containsInternalTextProvider(info) else { return false }
         if category == .files {
             return !info.itemProviders(for: [UTType.fileURL.identifier]).isEmpty
         }
@@ -1146,6 +1647,7 @@ private struct BoardDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
+        guard !containsInternalTextProvider(info) else { return false }
         if category == .files {
             let providers = info.itemProviders(for: [UTType.fileURL.identifier])
             guard !providers.isEmpty else { return false }
@@ -1174,6 +1676,10 @@ private struct BoardDropDelegate: DropDelegate {
     private func internalImageProvider(from info: DropInfo) -> NSItemProvider? {
         info.itemProviders(for: [UTType.fileURL.identifier])
             .first(where: { model.draggedImageID(from: $0) != nil })
+    }
+
+    private func containsInternalTextProvider(_ info: DropInfo) -> Bool {
+        !info.itemProviders(for: [BoardModel.textItemDragType]).isEmpty
     }
 }
 
