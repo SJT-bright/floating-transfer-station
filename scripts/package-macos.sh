@@ -64,6 +64,8 @@ universal_binary="$application_path/Contents/MacOS/FloatingTransferStationMac"
     "$work_root/FloatingTransferStationMac-x86_64" \
     -output "$universal_binary"
 /usr/bin/ditto "$package_root/Info.plist" "$application_path/Contents/Info.plist"
+/bin/mkdir -p "$application_path/Contents/Resources"
+/usr/bin/ditto "$package_root/Sources/FloatingTransferStationMac/Resources/GlassTap.wav" "$application_path/Contents/Resources/GlassTap.wav"
 /bin/chmod +x "$universal_binary"
 restart_path="$work_root/重启悬浮中转站.app"
 /bin/mkdir -p "$restart_path/Contents/MacOS"

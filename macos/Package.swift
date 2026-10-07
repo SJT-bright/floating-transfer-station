@@ -15,7 +15,9 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "FloatingTransferStationMac"
+            name: "FloatingTransferStationMac",
+            exclude: ["Resources/README.md"],
+            resources: [.copy("Resources/GlassTap.wav")]
         )
     ],
     swiftLanguageModes: [.v5]

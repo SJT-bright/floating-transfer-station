@@ -17,7 +17,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var expandedOrigin = NSPoint.zero
     private var isProgrammaticTransition = false
     private var restartInProgress = false
-    private let successSound = NSSound(named: NSSound.Name("Tink"))
+    private let successSound: NSSound? = {
+        #if SWIFT_PACKAGE
+        let resourceBundle = Bundle.module
+        #else
+        let resourceBundle = Bundle.main
+        #endif
+        guard let url = resourceBundle.url(forResource: "GlassTap", withExtension: "wav") else {
+            return nil
+        }
+        return NSSound(contentsOf: url, byReference: false)
+    }()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
