@@ -17,7 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var expandedOrigin = NSPoint.zero
     private var isProgrammaticTransition = false
     private var restartInProgress = false
-    private let successSound = NSSound(named: NSSound.Name("Pop"))
+    private let successSound = NSSound(named: NSSound.Name("Tink"))
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
