@@ -330,7 +330,7 @@ private final class TextDragSurfaceView: NSView, NSDraggingSource {
 
     private func makePreview() -> NSImage {
         let size = NSSize(width: 144, height: 28)
-        let title = name.isEmpty ? "文字" : "文字 · \(name)"
+        let title = name.isEmpty ? "未命名内容" : name
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
             .foregroundColor: NSColor.labelColor
@@ -1217,6 +1217,7 @@ private struct ItemCard: View {
     @Binding var activeTextDragID: UUID?
     @State private var showsFullText = false
     @State private var isTextExpanded = false
+    @State private var isDisclosureHovered = false
     @State private var measuredCardHeight: CGFloat = 0
     @State private var textDropEdge: TextDropEdge?
     @State private var nameDraft = ""
@@ -1225,6 +1226,8 @@ private struct ItemCard: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var appearance: PanelAppearance {
         model.settings.appearance ?? .defaults(isDark: colorScheme == .dark)
@@ -1240,160 +1243,83 @@ private struct ItemCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 8) {
-                Group {
-                    if item.kind == .text {
-                        Label("文字", systemImage: "text.alignleft")
-                            .font(.caption)
-                            .foregroundStyle(textColor.opacity(0.75))
-                            .overlay {
-                                TextDragSurface(
-                                    itemID: item.id,
-                                    text: item.text ?? "",
-                                    name: item.name ?? "",
-                                    activeTextDragID: $activeTextDragID
-                                )
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .contentShape(Rectangle())
-                                .allowsHitTesting(true)
-                                .accessibilityHidden(true)
-                            }
-                    } else {
-                        Label(
-                            item.kind == .file ? "文件" : "图片",
-                            systemImage: item.kind == .file ? "doc" : "photo"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(textColor.opacity(0.75))
-                        .onDrag { model.dragProvider(for: item) }
-                    }
-                }
-                .help(item.kind == .text
-                    ? "拖动“文字”标签或名称可在同一分类、同一置顶分区上下排序；拖到其他应用会输出全文。"
-                    : "拖动原始内容到其他应用")
-
-                Spacer()
-
-                Button {
-                    model.togglePinned(item.id)
-                } label: {
-                    Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                }
-                .help(item.isPinned ? "取消置顶" : "置顶")
-
-                Button {
-                    model.copyToClipboard(item)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                }
-                .help("复制")
-
-                if item.kind != .file {
-                    Menu {
-                        ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
-                            Button(model.displayName(for: category)) {
-                                model.move(item.id, to: category)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "folder")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .buttonStyle(.borderless)
-                    .fixedSize()
-                    .modifier(StationHoverEffect())
-                    .help("移动到其他分类")
-                }
-
-                Button(role: .destructive) {
-                    model.delete(item.id)
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .help("删除")
-            }
-            .buttonStyle(StationButtonStyle())
-
             HStack(spacing: 6) {
-                if isRenamingItem {
-                    TextField("输入名称", text: $nameDraft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                        .focused($isEditingName)
-                        .onAppear { isEditingName = true }
-                        .onSubmit { finishNaming() }
-                        .onChange(of: isEditingName) { focused in
-                            if !focused { finishNaming() }
-                        }
-                } else if let name = item.name, hasName {
-                    if item.kind == .text {
+                HStack(spacing: 5) {
+                    if isRenamingItem {
+                        TextField("输入名称", text: $nameDraft)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                            .focused($isEditingName)
+                            .onAppear { isEditingName = true }
+                            .onSubmit { finishNaming() }
+                            .onChange(of: isEditingName) { focused in
+                                if !focused { finishNaming() }
+                            }
+                    } else if item.kind == .text, hasName, let name = item.name {
+                        // Keep the arrow outside the draggable title hit area.
                         Button {
                             isTextExpanded.toggle()
                         } label: {
-                            Label(name, systemImage: isTextExpanded ? "chevron.down" : "chevron.right")
-                                .lineLimit(1)
+                            Image(systemName: "chevron.right")
+                                .rotationEffect(.degrees(isTextExpanded ? 90 : 0))
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(StationButtonStyle())
-                        .overlay {
-                            TextDragSurface(
-                                itemID: item.id,
-                                text: item.text ?? "",
-                                name: name,
-                                onClick: { isTextExpanded.toggle() },
-                                activeTextDragID: $activeTextDragID
-                            )
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .contentShape(Rectangle())
-                            .allowsHitTesting(true)
-                            .accessibilityHidden(true)
-                        }
-                        .help("点击展开；拖动名称可调整同分类、同一置顶分区内的顺序。")
+                        .buttonStyle(.plain)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(textColor.opacity(isDisclosureHovered ? 0.10 : 0))
+                                .allowsHitTesting(false)
+                        )
+                        .background(StationHoverTracker { hovered in
+                            isDisclosureHovered = hovered
+                            // Hover previews stay open for reading. Only a fresh
+                            // entry opens them; a click may close while hovered.
+                            if hovered && activeTextDragID == nil && !isRenamingItem {
+                                isTextExpanded = true
+                            }
+                        })
+                        .animation(.easeOut(duration: 0.12), value: isDisclosureHovered)
                         .accessibilityLabel(isTextExpanded ? "收起\(name)" : "展开\(name)")
+                        .help(isTextExpanded ? "点击收起正文" : "移入箭头展开正文，也可点击展开")
+
+                        draggableTextTitle(name, onClick: { isTextExpanded.toggle() })
+                            .help("点击展开/收起，拖动排序或拖出全文")
+                    } else if item.kind == .text {
+                        draggableTextTitle("添加名称", onClick: beginNaming)
+                            .foregroundStyle(textColor.opacity(0.7))
+                            .accessibilityAddTraits(.isButton)
+                            .help("点击添加名称；拖动此处可拖出全文或调整排序。")
+                    } else if let name = item.name, hasName {
+                        Text(name)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .lineLimit(1)
                     } else {
-                        Text(name).lineLimit(1)
+                        Button("添加名称") { beginNaming() }
+                            .buttonStyle(StationButtonStyle())
+                            .foregroundStyle(textColor.opacity(0.7))
                     }
-                } else {
-                    Button("添加名称") { beginNaming() }
-                        .buttonStyle(StationButtonStyle())
-                        .foregroundStyle(textColor.opacity(0.7))
-                }
-                Spacer(minLength: 0)
-                if !isRenamingItem {
-                    Button { beginNaming() } label: {
-                        Image(systemName: "pencil")
-                    }
-                    .buttonStyle(StationButtonStyle())
-                    .accessibilityLabel("给内容命名")
-                }
-            }
-            .font(.system(size: 12))
-            .onAppear { nameDraft = item.name ?? "" }
-            .onDisappear { if isRenamingItem { saveName() } }
 
-            if showsCategory {
-                Text(model.displayName(for: item.category))
-                    .font(.caption2)
-                    .foregroundStyle(textColor.opacity(0.75))
-            }
-
-            if item.kind == .text {
-                if !hasName || isTextExpanded {
-                    FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor))
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                        .help("在文字框内滚动查看完整内容；拖动左上角“文字”可拖出全文")
-                    if hasName {
-                        Button {
-                            isTextExpanded = false
-                        } label: {
-                            Label("收起为名称", systemImage: "chevron.up")
+                    if !isRenamingItem {
+                        Button { beginNaming() } label: {
+                            Image(systemName: "pencil")
                         }
-                        .font(.caption)
                         .buttonStyle(StationButtonStyle())
+                        .accessibilityLabel("给内容命名")
                     }
-                    Button("查看全文") { showsFullText = true }
-                        .font(.caption)
-                        .buttonStyle(StationButtonStyle())
+                }
+                .font(.system(size: 12))
+                .layoutPriority(1)
+
+                Spacer(minLength: 0)
+
+                HStack(spacing: 5) {
+                    if item.kind == .text {
+                        Button { showsFullText = true } label: {
+                            Image(systemName: "doc.text.magnifyingglass")
+                        }
+                        .accessibilityLabel("查看全文")
+                        .help("查看全文")
                         .sheet(isPresented: $showsFullText) {
                             VStack(spacing: 12) {
                                 HStack {
@@ -1412,6 +1338,65 @@ private struct ItemCard: View {
                             .padding(16)
                             .frame(width: 420, height: 440)
                         }
+                    }
+
+                    Button {
+                        model.togglePinned(item.id)
+                    } label: {
+                        Image(systemName: item.isPinned ? "pin.fill" : "pin")
+                    }
+                    .help(item.isPinned ? "取消置顶" : "置顶")
+
+                    Button {
+                        model.copyToClipboard(item)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .help("复制")
+
+                    if item.kind != .file {
+                        Menu {
+                            ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
+                                Button(model.displayName(for: category)) {
+                                    model.move(item.id, to: category)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "folder")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .buttonStyle(.borderless)
+                        .fixedSize()
+                        .modifier(StationHoverEffect())
+                        .help("移动到其他分类")
+                    }
+
+                    Button(role: .destructive) {
+                        model.delete(item.id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .help("删除")
+                }
+                .fixedSize(horizontal: true, vertical: false)
+            }
+            .buttonStyle(StationButtonStyle())
+            .onAppear { nameDraft = item.name ?? "" }
+            .onDisappear { if isRenamingItem { saveName() } }
+
+            if showsCategory {
+                Text(model.displayName(for: item.category))
+                    .font(.caption2)
+                    .foregroundStyle(textColor.opacity(0.75))
+            }
+
+            if item.kind == .text {
+                if !hasName || isTextExpanded {
+                    FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor))
+                        .frame(maxWidth: .infinity)
+                        .clipped()
+                        .transition(.opacity)
+                        .help("在文字框内滚动查看正文；拖动名称可拖出全文")
                 }
             } else if item.kind == .file {
                 if let url = model.fileURL(for: item) {
@@ -1458,6 +1443,7 @@ private struct ItemCard: View {
             }
         }
         .padding(7)
+        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.26, dampingFraction: 1), value: isTextExpanded)
         .foregroundStyle(textColor)
         .background(
             StationGlassLens(cornerRadius: 16,
@@ -1531,6 +1517,31 @@ private struct ItemCard: View {
 
     private func saveName() {
         model.renameItem(item.id, to: nameDraft)
+    }
+
+    private func draggableTextTitle(_ title: String, onClick: @escaping () -> Void) -> some View {
+        Button(action: onClick) {
+            Text(title)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+            .buttonStyle(.plain)
+            .overlay {
+                GeometryReader { geometry in
+                    TextDragSurface(
+                        itemID: item.id,
+                        text: item.text ?? "",
+                        name: item.name ?? "",
+                        onClick: onClick,
+                        activeTextDragID: $activeTextDragID
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(true)
+                    .accessibilityHidden(true)
+                }
+            }
     }
 
     private func beginNaming() {
