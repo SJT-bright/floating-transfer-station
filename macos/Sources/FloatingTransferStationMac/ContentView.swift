@@ -1218,11 +1218,11 @@ private struct ItemCard: View {
     @Binding var activeTextDragID: UUID?
     @State private var showsFullText = false
     @StateObject private var disclosure = TextCardDisclosure()
-    @State private var isDisclosureHovered = false
     @State private var measuredCardHeight: CGFloat = 0
     @State private var textDropEdge: TextDropEdge?
     @State private var nameDraft = ""
     @State private var isRenamingItem = false
+    @State private var isShowingContextMenu = false
     @FocusState private var isEditingName: Bool
 
     @Environment(\.colorScheme) private var colorScheme
@@ -1250,144 +1250,44 @@ private struct ItemCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 6) {
-                HStack(spacing: 5) {
-                    if isRenamingItem {
-                        TextField("输入名称", text: $nameDraft)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
-                            .focused($isEditingName)
-                            .onAppear { isEditingName = true }
-                            .onSubmit { finishNaming() }
-                            .onChange(of: isEditingName) { focused in
-                                if !focused { finishNaming() }
+            Group {
+                if isRenamingItem {
+                    TextField("输入名称", text: $nameDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
+                        .focused($isEditingName)
+                        .onAppear {
+                            // Focus only after SwiftUI has installed the new editor.
+                            // Otherwise the title's mouse-up can restore the search field.
+                            DispatchQueue.main.async {
+                                if isRenamingItem { isEditingName = true }
                             }
-                    } else if item.kind == .text, hasName, let name = item.name {
-                        // Keep the arrow outside the draggable title hit area.
-                        Button {
-                            disclosure.toggle()
-                        } label: {
-                            Image(systemName: "chevron.right")
-                                .rotationEffect(.degrees(disclosure.isExpanded ? 90 : 0))
-                                .frame(width: 22, height: 22)
-                                .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(textColor.opacity(isDisclosureHovered ? 0.10 : 0))
-                                .allowsHitTesting(false)
-                        )
+                        .onSubmit { finishNaming() }
+                        .onChange(of: isEditingName) { focused in
+                            if !focused { finishNaming() }
+                        }
+                } else if item.kind == .text, hasName, let name = item.name {
+                    draggableTextTitle(name, onClick: beginNaming)
                         .background(StationHoverTracker { hovered in
-                            isDisclosureHovered = hovered
-                            if hovered && activeTextDragID == nil && !isRenamingItem {
+                            if hovered && activeTextDragID == nil && !isRenamingItem && !isShowingContextMenu {
                                 disclosure.enterDisclosure()
                             }
                         })
-                        .animation(disclosureAnimation, value: isDisclosureHovered)
-                        .accessibilityLabel(disclosure.isExpanded ? "收起\(name)" : "展开\(name)")
-                        .help(disclosure.isExpanded ? "移出卡片后自动收起，也可点击收起" : "移入箭头展开正文，也可点击展开")
-
-                        draggableTextTitle(name, onClick: { disclosure.toggle() })
-                            .help("点击展开/收起，拖动排序或拖出全文")
-                    } else if item.kind == .text {
-                        draggableTextTitle("添加名称", onClick: beginNaming)
-                            .foregroundStyle(textColor.opacity(0.7))
-                            .accessibilityAddTraits(.isButton)
-                            .help("点击添加名称；拖动此处可拖出全文或调整排序。")
-                    } else if let name = item.name, hasName {
-                        Text(name)
-                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .lineLimit(1)
-                    } else {
-                        Button("添加名称") { beginNaming() }
-                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
-                            .buttonStyle(StationButtonStyle())
-                            .foregroundStyle(textColor.opacity(0.7))
-                    }
-
-                    if !isRenamingItem {
-                        Button { beginNaming() } label: {
-                            Image(systemName: "pencil")
-                        }
-                        .buttonStyle(StationButtonStyle())
-                        .accessibilityLabel("给内容命名")
-                    }
+                        .help("点击标题改名；移入标题展开正文，移出卡片收起；右键显示操作；拖动标题排序或拖出全文")
+                } else if item.kind == .text {
+                    draggableTextTitle("添加名称", onClick: beginNaming)
+                        .foregroundStyle(textColor.opacity(0.7))
+                        .accessibilityAddTraits(.isButton)
+                        .help("点击添加名称；右键显示操作；拖动标题排序或拖出全文")
+                } else if let name = item.name, hasName {
+                    titleButton(name)
+                } else {
+                    titleButton("添加名称")
+                        .foregroundStyle(textColor.opacity(0.7))
                 }
-                .font(.system(size: 12))
-                .layoutPriority(1)
-
-                Spacer(minLength: 0)
-
-                HStack(spacing: 5) {
-                    if item.kind == .text {
-                        Button { showsFullText = true } label: {
-                            Image(systemName: "doc.text.magnifyingglass")
-                        }
-                        .accessibilityLabel("查看全文")
-                        .help("查看全文")
-                        .sheet(isPresented: $showsFullText) {
-                            VStack(spacing: 12) {
-                                HStack {
-                                    Text("文字全文").font(.headline)
-                                    Spacer()
-                                    Button("复制全文") { model.copyToClipboard(item) }
-                                        .buttonStyle(.bordered)
-                                        .modifier(StationHoverEffect())
-                                    Button("关闭") { showsFullText = false }
-                                        .buttonStyle(.bordered)
-                                        .modifier(StationHoverEffect())
-                                        .keyboardShortcut(.cancelAction)
-                                }
-                                FullTextReader(text: item.text ?? "")
-                            }
-                            .padding(16)
-                            .frame(width: 420, height: 440)
-                        }
-                    }
-
-                    Button {
-                        model.togglePinned(item.id)
-                    } label: {
-                        Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                    }
-                    .help(item.isPinned ? "取消置顶" : "置顶")
-
-                    Button {
-                        model.copyToClipboard(item)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                    }
-                    .help("复制")
-
-                    if item.kind != .file {
-                        Menu {
-                            ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
-                                Button(model.displayName(for: category)) {
-                                    model.move(item.id, to: category)
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "folder")
-                        }
-                        .menuStyle(.borderlessButton)
-                        .buttonStyle(.borderless)
-                        .fixedSize()
-                        .modifier(StationHoverEffect())
-                        .help("移动到其他分类")
-                    }
-
-                    Button(role: .destructive) {
-                        model.delete(item.id)
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .help("删除")
-                }
-                .fixedSize(horizontal: true, vertical: false)
             }
-            .buttonStyle(StationButtonStyle())
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
             .onAppear { nameDraft = item.name ?? "" }
             .onDisappear { finishNaming() }
 
@@ -1407,35 +1307,21 @@ private struct ItemCard: View {
                 }
             } else if item.kind == .file {
                 if let url = model.fileURL(for: item) {
-                    HStack(spacing: 10) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 32, height: 32)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(item.fileName ?? url.lastPathComponent)
-                                .font(.system(size: 12, weight: .medium))
-                                .lineLimit(2)
-                                .truncationMode(.middle)
-                            if let size = item.fileSize {
-                                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                                    .font(.caption2)
-                                    .foregroundStyle(textColor.opacity(0.75))
-                            }
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.fileName ?? url.lastPathComponent)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                        if let size = item.fileSize {
+                            Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+                                .font(.caption2)
+                                .foregroundStyle(textColor.opacity(0.75))
                         }
-                        Spacer(minLength: 0)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onDrag { model.dragProvider(for: item) }
                     .help("拖动文件到 Finder 或其他应用")
-                    Button {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    } label: {
-                        Label("在 Finder 中显示", systemImage: "folder")
-                    }
-                    .font(.caption)
-                    .buttonStyle(StationButtonStyle())
                 } else {
                     Label("文件副本已丢失", systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -1458,8 +1344,12 @@ private struct ItemCard: View {
         .onChange(of: isRenamingItem) { _ in refreshDisclosureProtection() }
         .onChange(of: isEditingName) { _ in refreshDisclosureProtection() }
         .onChange(of: showsFullText) { _ in refreshDisclosureProtection() }
+        .onChange(of: isShowingContextMenu) { _ in refreshDisclosureProtection() }
         .onChange(of: activeTextDragID) { _ in refreshDisclosureProtection() }
-        .onDisappear { disclosure.cancelPendingCollapse() }
+        .onDisappear {
+            disclosure.cancelPendingCollapse()
+            presentation.setContentEditing(false, itemID: item.id)
+        }
         .foregroundStyle(textColor)
         .background(
             StationGlassLens(cornerRadius: 16,
@@ -1509,6 +1399,22 @@ private struct ItemCard: View {
             }
         }
         .contextMenu {
+            Button(hasName ? "重命名" : "添加名称") { beginNaming() }
+                .onAppear { isShowingContextMenu = true }
+                .onDisappear { isShowingContextMenu = false }
+            if item.kind == .text {
+                Button("查看全文") { showsFullText = true }
+                if hasName {
+                    Button(disclosure.isExpanded ? "收起正文" : "展开正文") {
+                        // An explicit menu action is allowed after releasing the
+                        // menu's hover lock; editing/dragging protection still applies.
+                        isShowingContextMenu = false
+                        refreshDisclosureProtection()
+                        disclosure.toggle()
+                    }
+                }
+            }
+            Divider()
             Button(item.isPinned ? "取消置顶" : "置顶") {
                 model.togglePinned(item.id)
             }
@@ -1523,16 +1429,51 @@ private struct ItemCard: View {
                         }
                     }
                 }
+            } else if let url = model.fileURL(for: item) {
+                Button("在 Finder 中显示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
             }
             Divider()
             Button("删除", role: .destructive) {
                 model.delete(item.id)
             }
         }
+        .sheet(isPresented: $showsFullText) {
+            VStack(spacing: 12) {
+                HStack {
+                    Text("文字全文").font(.headline)
+                    Spacer()
+                    Button("复制全文") { model.copyToClipboard(item) }
+                        .buttonStyle(.bordered)
+                        .modifier(StationHoverEffect())
+                    Button("关闭") { showsFullText = false }
+                        .buttonStyle(.bordered)
+                        .modifier(StationHoverEffect())
+                        .keyboardShortcut(.cancelAction)
+                }
+                FullTextReader(text: item.text ?? "")
+            }
+            .padding(16)
+            .frame(width: 420, height: 440)
+        }
     }
 
     private func saveName() {
         model.renameItem(item.id, to: nameDraft)
+    }
+
+    private func titleButton(_ title: String) -> some View {
+        Button(action: beginNaming) {
+            Text(title)
+                .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("点击标题改名；右键显示全部操作")
     }
 
     private func draggableTextTitle(_ title: String, onClick: @escaping () -> Void) -> some View {
@@ -1574,11 +1515,12 @@ private struct ItemCard: View {
         guard isRenamingItem else { return }
         saveName()
         isRenamingItem = false
-        presentation.setContentEditing(false, itemID: item.id)
+        refreshDisclosureProtection()
     }
 
     private func refreshDisclosureProtection() {
-        disclosure.setProtected(isRenamingItem || isEditingName || showsFullText || activeTextDragID != nil)
+        disclosure.setProtected(isRenamingItem || isEditingName || showsFullText || isShowingContextMenu || activeTextDragID != nil)
+        presentation.setContentEditing(isRenamingItem || showsFullText || isShowingContextMenu, itemID: item.id)
     }
 }
 
