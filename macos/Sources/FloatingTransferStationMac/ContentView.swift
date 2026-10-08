@@ -1041,7 +1041,7 @@ private struct AppearanceEditor: View {
                     Text("系统已开启降低透明度，材质效果暂不显示。")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("清透玻璃，不叠加磨砂。降低背景不透明度可看见背后的颜色；macOS 26 支持原生折射，旧系统保留透明亮边。")
+                    Text("清透玻璃，不叠加磨砂。降低背景不透明度可看见背后的颜色；系统 26 及以上版本支持原生折射，旧系统保留透明亮边。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Text("实时生效并自动保存，图片保持原样。")
@@ -1321,7 +1321,7 @@ private struct ItemCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                     .onDrag { model.dragProvider(for: item) }
-                    .help("拖动文件到 Finder 或其他应用")
+                    .help("拖动文件到访达或其他应用")
                 } else {
                     Label("文件副本已丢失", systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -1430,7 +1430,7 @@ private struct ItemCard: View {
                     }
                 }
             } else if let url = model.fileURL(for: item) {
-                Button("在 Finder 中显示") {
+                Button("在访达中显示") {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
                 }
             }

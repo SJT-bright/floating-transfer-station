@@ -49,6 +49,7 @@ fi
 /usr/bin/ditto "$package_root/Info.plist" "$application_path/Contents/Info.plist"
 /bin/mkdir -p "$application_path/Contents/Resources"
 /usr/bin/ditto "$package_root/Sources/FloatingTransferStationMac/Resources/GlassTap.wav" "$application_path/Contents/Resources/GlassTap.wav"
+/usr/bin/ditto "$package_root/Sources/FloatingTransferStationMac/Resources/zh-Hans.lproj" "$application_path/Contents/Resources/zh-Hans.lproj"
 /bin/chmod +x "$application_path/Contents/MacOS/FloatingTransferStationMac"
 restart_path="$build_root/重启悬浮中转站.app"
 /bin/mkdir -p "$restart_path/Contents/MacOS"

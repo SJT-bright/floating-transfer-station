@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "FloatingTransferStationMac",
+    defaultLocalization: "zh-Hans",
     platforms: [
         .macOS(.v13)
     ],
@@ -17,7 +18,7 @@ let package = Package(
         .executableTarget(
             name: "FloatingTransferStationMac",
             exclude: ["Resources/README.md"],
-            resources: [.copy("Resources/GlassTap.wav")]
+            resources: [.copy("Resources/GlassTap.wav"), .process("Resources/zh-Hans.lproj")]
         )
     ],
     swiftLanguageModes: [.v5]

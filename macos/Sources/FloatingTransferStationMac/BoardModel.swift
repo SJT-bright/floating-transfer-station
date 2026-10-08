@@ -758,7 +758,7 @@ final class BoardModel: ObservableObject {
             let orderedImages = images.sorted { $0.0 < $1.0 }.map(\.1)
             if category == .files {
                 if orderedFiles.isEmpty {
-                    self.showStatus("请从 Finder 拖入文件，或点击“导入文件”。")
+                    self.showStatus("请从访达拖入文件，或点击“导入文件”。")
                 } else {
                     self.importFiles(orderedFiles)
                 }
