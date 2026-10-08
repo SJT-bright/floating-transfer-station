@@ -2,6 +2,72 @@ import AppKit
 import Combine
 import QuartzCore
 
+enum PanelMotionTiming {
+    static let exitDelay: TimeInterval = 0.38
+    static let retryDelay: TimeInterval = 0.12
+    static func revealDuration(reduceMotion: Bool) -> TimeInterval { reduceMotion ? 0.12 : 0.24 }
+    static func collapseDuration(reduceMotion: Bool) -> TimeInterval { reduceMotion ? 0.12 : 0.20 }
+}
+
+final class TextCardDisclosure: ObservableObject {
+    @Published private(set) var isExpanded = false
+    private var isInside = false
+    private var isProtected = false
+    private var collapseWorkItem: DispatchWorkItem?
+    private var generation = 0
+
+    func enterDisclosure() {
+        cancelPendingCollapse()
+        guard !isProtected else { return }
+        isExpanded = true
+    }
+
+    func toggle() {
+        cancelPendingCollapse()
+        guard !isProtected else { return }
+        isExpanded.toggle()
+    }
+
+    func handleCardHover(_ inside: Bool) {
+        isInside = inside
+        if inside { cancelPendingCollapse() }
+        else { scheduleCollapse() }
+    }
+
+    func setProtected(_ protected: Bool) {
+        guard isProtected != protected else { return }
+        isProtected = protected
+        if protected { cancelPendingCollapse() }
+        else if !isInside { scheduleCollapse() }
+    }
+
+    func cancelPendingCollapse() {
+        generation &+= 1
+        collapseWorkItem?.cancel()
+        collapseWorkItem = nil
+    }
+
+    private func scheduleCollapse(after delay: TimeInterval = PanelMotionTiming.exitDelay) {
+        cancelPendingCollapse()
+        guard isExpanded, !isInside, !isProtected else { return }
+        let expectedGeneration = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.generation == expectedGeneration,
+                  !self.isInside, !self.isProtected else { return }
+            self.collapseWorkItem = nil
+            if NSEvent.pressedMouseButtons != 0 {
+                self.scheduleCollapse(after: PanelMotionTiming.retryDelay)
+            } else {
+                self.isExpanded = false
+            }
+        }
+        collapseWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    deinit { collapseWorkItem?.cancel() }
+}
+
 enum PanelRevealMotion {
     static let animationKey = "panelReveal"
 
@@ -10,7 +76,7 @@ enum PanelRevealMotion {
         fade.fromValue = 0
         fade.toValue = 1
         let group = CAAnimationGroup()
-        group.duration = reduceMotion ? 0.12 : 0.24
+        group.duration = PanelMotionTiming.revealDuration(reduceMotion: reduceMotion)
         fade.duration = group.duration
         if reduceMotion {
             group.animations = [fade]
@@ -41,7 +107,7 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
         fade.fromValue = 1
         fade.toValue = 0
         let group = CAAnimationGroup()
-        group.duration = reduceMotion ? 0.12 : 0.20
+        group.duration = PanelMotionTiming.collapseDuration(reduceMotion: reduceMotion)
         fade.duration = group.duration
         if reduceMotion {
             group.animations = [fade]

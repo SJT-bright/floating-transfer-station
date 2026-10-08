@@ -1217,7 +1217,7 @@ private struct ItemCard: View {
     var showsCategory = false
     @Binding var activeTextDragID: UUID?
     @State private var showsFullText = false
-    @State private var isTextExpanded = false
+    @StateObject private var disclosure = TextCardDisclosure()
     @State private var isDisclosureHovered = false
     @State private var measuredCardHeight: CGFloat = 0
     @State private var textDropEdge: TextDropEdge?
@@ -1242,6 +1242,12 @@ private struct ItemCard: View {
         !(item.name?.isEmpty ?? true)
     }
 
+    private var disclosureAnimation: Animation {
+        disclosure.isExpanded
+            ? .easeOut(duration: PanelMotionTiming.revealDuration(reduceMotion: reduceMotion))
+            : .easeIn(duration: PanelMotionTiming.collapseDuration(reduceMotion: reduceMotion))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 6) {
@@ -1259,10 +1265,10 @@ private struct ItemCard: View {
                     } else if item.kind == .text, hasName, let name = item.name {
                         // Keep the arrow outside the draggable title hit area.
                         Button {
-                            isTextExpanded.toggle()
+                            disclosure.toggle()
                         } label: {
                             Image(systemName: "chevron.right")
-                                .rotationEffect(.degrees(isTextExpanded ? 90 : 0))
+                                .rotationEffect(.degrees(disclosure.isExpanded ? 90 : 0))
                                 .frame(width: 22, height: 22)
                                 .contentShape(Rectangle())
                         }
@@ -1274,17 +1280,15 @@ private struct ItemCard: View {
                         )
                         .background(StationHoverTracker { hovered in
                             isDisclosureHovered = hovered
-                            // Hover previews stay open for reading. Only a fresh
-                            // entry opens them; a click may close while hovered.
                             if hovered && activeTextDragID == nil && !isRenamingItem {
-                                isTextExpanded = true
+                                disclosure.enterDisclosure()
                             }
                         })
-                        .animation(.easeOut(duration: 0.12), value: isDisclosureHovered)
-                        .accessibilityLabel(isTextExpanded ? "收起\(name)" : "展开\(name)")
-                        .help(isTextExpanded ? "点击收起正文" : "移入箭头展开正文，也可点击展开")
+                        .animation(disclosureAnimation, value: isDisclosureHovered)
+                        .accessibilityLabel(disclosure.isExpanded ? "收起\(name)" : "展开\(name)")
+                        .help(disclosure.isExpanded ? "移出卡片后自动收起，也可点击收起" : "移入箭头展开正文，也可点击展开")
 
-                        draggableTextTitle(name, onClick: { isTextExpanded.toggle() })
+                        draggableTextTitle(name, onClick: { disclosure.toggle() })
                             .help("点击展开/收起，拖动排序或拖出全文")
                     } else if item.kind == .text {
                         draggableTextTitle("添加名称", onClick: beginNaming)
@@ -1394,7 +1398,7 @@ private struct ItemCard: View {
             }
 
             if item.kind == .text {
-                if !hasName || isTextExpanded {
+                if !hasName || disclosure.isExpanded {
                     FullTextReader(text: item.text ?? "", compact: true, color: NSColor(textColor))
                         .frame(maxWidth: .infinity)
                         .clipped()
@@ -1446,7 +1450,16 @@ private struct ItemCard: View {
             }
         }
         .padding(7)
-        .animation(reduceMotion ? nil : .interactiveSpring(response: 0.26, dampingFraction: 1), value: isTextExpanded)
+        // A fading native reader must not paint over the next card while
+        // this card's animated height contracts.
+        .clipped()
+        .animation(disclosureAnimation, value: disclosure.isExpanded)
+        .background(StationHoverTracker { disclosure.handleCardHover($0) })
+        .onChange(of: isRenamingItem) { _ in refreshDisclosureProtection() }
+        .onChange(of: isEditingName) { _ in refreshDisclosureProtection() }
+        .onChange(of: showsFullText) { _ in refreshDisclosureProtection() }
+        .onChange(of: activeTextDragID) { _ in refreshDisclosureProtection() }
+        .onDisappear { disclosure.cancelPendingCollapse() }
         .foregroundStyle(textColor)
         .background(
             StationGlassLens(cornerRadius: 16,
@@ -1552,6 +1565,7 @@ private struct ItemCard: View {
         // Hold the dock open before inserting/focusing the editor. Hover events
         // caused by layout changes or an IME must not tear down this card.
         presentation.setContentEditing(true, itemID: item.id)
+        disclosure.setProtected(true)
         nameDraft = item.name ?? ""
         isRenamingItem = true
     }
@@ -1561,6 +1575,10 @@ private struct ItemCard: View {
         saveName()
         isRenamingItem = false
         presentation.setContentEditing(false, itemID: item.id)
+    }
+
+    private func refreshDisclosureProtection() {
+        disclosure.setProtected(isRenamingItem || isEditingName || showsFullText || activeTextDragID != nil)
     }
 }
 

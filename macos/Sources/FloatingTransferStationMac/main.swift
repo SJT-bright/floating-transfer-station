@@ -112,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     guard let self, !self.isAutoCollapseBlocked,
                           let panel = self.panel,
                           !panel.frame.contains(NSEvent.mouseLocation) else { return }
-                    self.scheduleCollapse(after: 0.38)
+                    self.scheduleCollapse(after: PanelMotionTiming.exitDelay)
                 }
             }
         }
@@ -170,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        scheduleCollapse(after: 0.38)
+        scheduleCollapse(after: PanelMotionTiming.exitDelay)
     }
 
     private func scheduleCollapse(after delay: TimeInterval) {

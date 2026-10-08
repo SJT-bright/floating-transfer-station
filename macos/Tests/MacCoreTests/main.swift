@@ -21,6 +21,7 @@ enum MacCoreTests {
         try testVerticalRailDragStaysAttachedToRightEdge()
         try testPanelStaysExpandedWhileDragging()
         try testPanelStaysExpandedWhileEditing()
+        try testCardHoverDisclosureCancelsAndResumes()
         try testCopyImageToAnotherCategoryPreservesSourceAndPersists()
         try testImageDragProviderExportsImageAndFile()
         try testClipboardAlwaysGoesToInbox()
@@ -41,7 +42,7 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (31 tests)")
+        print("macOS core tests passed (32 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -721,6 +722,37 @@ enum MacCoreTests {
             pressedMouseButtons: 0, hasAttachedSheet: false,
             isEditingText: false, isPointerInside: false
         ), "automatic collapse did not resume after editing ended")
+    }
+
+    private static func testCardHoverDisclosureCancelsAndResumes() throws {
+        let card = TextCardDisclosure()
+        card.handleCardHover(true)
+        card.enterDisclosure()
+        try check(card.isExpanded, "arrow hover did not expand the text card")
+        card.handleCardHover(false)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+        try check(card.isExpanded, "card skipped the window's exit delay")
+        card.handleCardHover(true)
+        RunLoop.current.run(until: Date().addingTimeInterval(PanelMotionTiming.exitDelay + 0.08))
+        try check(card.isExpanded, "stale exit collapsed a re-entered card")
+        card.handleCardHover(false)
+        try waitUntil { !card.isExpanded }
+        card.handleCardHover(true)
+        card.enterDisclosure()
+        card.setProtected(true)
+        card.handleCardHover(false)
+        RunLoop.current.run(until: Date().addingTimeInterval(PanelMotionTiming.exitDelay + 0.08))
+        try check(card.isExpanded, "card collapsed during naming, reading or dragging")
+        card.setProtected(false)
+        try waitUntil { !card.isExpanded }
+        card.enterDisclosure()
+        card.handleCardHover(false)
+        card.cancelPendingCollapse()
+        RunLoop.current.run(until: Date().addingTimeInterval(PanelMotionTiming.exitDelay + 0.08))
+        try check(card.isExpanded, "cancelled card timer still fired")
+        try check(PanelRevealMotion.animation(reduceMotion: false).duration == PanelMotionTiming.revealDuration(reduceMotion: false)
+            && PanelCollapseMotion.animation(reduceMotion: false).duration == PanelMotionTiming.collapseDuration(reduceMotion: false),
+            "card and window motion durations diverged")
     }
 
     private static func testImageDragProviderExportsImageAndFile() throws {
