@@ -736,7 +736,7 @@ struct ContentView: View {
                                 .foregroundStyle(.quaternary)
                                 .padding(.horizontal, 4)
                             }
-                            ItemCard(model: model, item: item, showsCategory: isSearching,
+                            ItemCard(model: model, presentation: presentation, item: item, showsCategory: isSearching,
                                      activeTextDragID: $activeTextDragID)
                         }
                     }
@@ -1212,6 +1212,7 @@ private struct TextReorderDropDelegate: DropDelegate {
 
 private struct ItemCard: View {
     @ObservedObject var model: BoardModel
+    let presentation: PanelPresentation
     let item: BoardItem
     var showsCategory = false
     @Binding var activeTextDragID: UUID?
@@ -1248,7 +1249,7 @@ private struct ItemCard: View {
                     if isRenamingItem {
                         TextField("输入名称", text: $nameDraft)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 12))
+                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
                             .focused($isEditingName)
                             .onAppear { isEditingName = true }
                             .onSubmit { finishNaming() }
@@ -1292,10 +1293,12 @@ private struct ItemCard: View {
                             .help("点击添加名称；拖动此处可拖出全文或调整排序。")
                     } else if let name = item.name, hasName {
                         Text(name)
+                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .lineLimit(1)
                     } else {
                         Button("添加名称") { beginNaming() }
+                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
                             .buttonStyle(StationButtonStyle())
                             .foregroundStyle(textColor.opacity(0.7))
                     }
@@ -1382,7 +1385,7 @@ private struct ItemCard: View {
             }
             .buttonStyle(StationButtonStyle())
             .onAppear { nameDraft = item.name ?? "" }
-            .onDisappear { if isRenamingItem { saveName() } }
+            .onDisappear { finishNaming() }
 
             if showsCategory {
                 Text(model.displayName(for: item.category))
@@ -1522,6 +1525,7 @@ private struct ItemCard: View {
     private func draggableTextTitle(_ title: String, onClick: @escaping () -> Void) -> some View {
         Button(action: onClick) {
             Text(title)
+                .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -1545,6 +1549,9 @@ private struct ItemCard: View {
     }
 
     private func beginNaming() {
+        // Hold the dock open before inserting/focusing the editor. Hover events
+        // caused by layout changes or an IME must not tear down this card.
+        presentation.setContentEditing(true, itemID: item.id)
         nameDraft = item.name ?? ""
         isRenamingItem = true
     }
@@ -1553,6 +1560,7 @@ private struct ItemCard: View {
         guard isRenamingItem else { return }
         saveName()
         isRenamingItem = false
+        presentation.setContentEditing(false, itemID: item.id)
     }
 }
 
@@ -1616,7 +1624,7 @@ private struct FullTextReader: NSViewRepresentable {
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.font = .systemFont(ofSize: compact ? 13 : 14)
+        textView.font = .systemFont(ofSize: compact ? TextCardLayout.bodyFontSize : 14)
         textView.textColor = color
         textView.textContainerInset = compact ? .zero : NSSize(width: 8, height: 8)
         if compact { textView.textContainer?.lineFragmentPadding = 0 }

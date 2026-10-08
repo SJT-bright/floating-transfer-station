@@ -20,6 +20,7 @@ enum MacCoreTests {
         try testPanelGeometryClampsExpandedPanelToCompactBounds()
         try testVerticalRailDragStaysAttachedToRightEdge()
         try testPanelStaysExpandedWhileDragging()
+        try testPanelStaysExpandedWhileEditing()
         try testCopyImageToAnotherCategoryPreservesSourceAndPersists()
         try testImageDragProviderExportsImageAndFile()
         try testClipboardAlwaysGoesToInbox()
@@ -40,7 +41,7 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (30 tests)")
+        print("macOS core tests passed (31 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -693,6 +694,33 @@ enum MacCoreTests {
             ),
             "panel did not schedule a collapse after an outside release"
         )
+    }
+
+    private static func testPanelStaysExpandedWhileEditing() throws {
+        let presentation = PanelPresentation()
+        let first = UUID(), second = UUID()
+        var editingChanges: [Bool] = []
+        presentation.onContentEditingChanged = { editingChanges.append($0) }
+        presentation.setContentEditing(true, itemID: first)
+        presentation.setContentEditing(true, itemID: first)
+        presentation.setContentEditing(true, itemID: second)
+        presentation.setContentEditing(false, itemID: first)
+        try check(presentation.isEditingContent && editingChanges == [true], "one editor released another editor's protection")
+        try check(!PanelInteractionPolicy.shouldCollapse(
+            pressedMouseButtons: 0, hasAttachedSheet: false,
+            isEditingText: presentation.isEditingContent, isPointerInside: false
+        ), "panel collapsed while naming with pointer outside, including IME candidate selection")
+        presentation.setContentEditing(false, itemID: second)
+        presentation.setContentEditing(false, itemID: second)
+        try check(!presentation.isEditingContent && editingChanges == [true, false], "editing protection leaked or notified repeatedly")
+        try check(!PanelInteractionPolicy.shouldCollapse(
+            pressedMouseButtons: 0, hasAttachedSheet: false,
+            isEditingText: false, isPointerInside: true
+        ), "layout-generated hover exit collapsed a panel with the pointer still inside")
+        try check(PanelInteractionPolicy.shouldCollapse(
+            pressedMouseButtons: 0, hasAttachedSheet: false,
+            isEditingText: false, isPointerInside: false
+        ), "automatic collapse did not resume after editing ended")
     }
 
     private static func testImageDragProviderExportsImageAndFile() throws {

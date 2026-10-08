@@ -99,6 +99,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         presentation.onHoverChanged = { [weak self] isInside in
             self?.handleHover(isInside)
         }
+        presentation.onContentEditingChanged = { [weak self] editing in
+            guard let self else { return }
+            self.collapseWorkItem?.cancel()
+            self.collapseWorkItem = nil
+            if editing {
+                self.collapseMotion.cancel()
+                self.setExpanded(true)
+            } else {
+                // Let the field editor resign before checking automatic collapse.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.isAutoCollapseBlocked,
+                          let panel = self.panel,
+                          !panel.frame.contains(NSEvent.mouseLocation) else { return }
+                    self.scheduleCollapse(after: 0.38)
+                }
+            }
+        }
         presentation.onVerticalDragChanged = { [weak self] gestureStartMouse in
             self?.handleVerticalDragChanged(gestureStartMouse: gestureStartMouse)
         }
@@ -158,13 +175,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func scheduleCollapse(after delay: TimeInterval) {
         let workItem = DispatchWorkItem { [weak self] in
-            guard let self, self.isDocked, !self.presentation.isEditingAppearance else {
+            guard let self, self.isDocked, !self.isAutoCollapseBlocked,
+                  let panel = self.panel, !panel.frame.contains(NSEvent.mouseLocation) else {
                 return
             }
 
             let shouldCollapse = PanelInteractionPolicy.shouldCollapse(
                 pressedMouseButtons: NSEvent.pressedMouseButtons,
-                hasAttachedSheet: self.panel?.attachedSheet != nil
+                hasAttachedSheet: panel.attachedSheet != nil,
+                isEditingText: self.isAutoCollapseBlocked,
+                isPointerInside: panel.frame.contains(NSEvent.mouseLocation)
             )
             if shouldCollapse {
                 self.setExpanded(false)
@@ -217,6 +237,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return PanelGeometry.isDocked(NSRect(origin: expandedOrigin, size: expandedSize), in: screen.visibleFrame)
     }
 
+    private var isAutoCollapseBlocked: Bool {
+        presentation.isEditingAppearance || presentation.isEditingContent
+            || (panel?.isKeyWindow == true && (panel?.firstResponder as? NSText)?.isEditable == true)
+    }
+
     private func setExpanded(_ expanded: Bool) {
         if expanded {
             collapseMotion.cancel()
@@ -232,7 +257,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             applyExpanded(true)
             return
         }
-        guard isDocked, !collapseMotion.isRunning, !presentation.isEditingAppearance else {
+        guard isDocked, !collapseMotion.isRunning, !isAutoCollapseBlocked,
+              !panel.frame.contains(NSEvent.mouseLocation) else {
             return
         }
         guard let layer = panel.contentView?.layer else {
@@ -246,7 +272,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             towardLeft: presentation.isDockedLeft
         ) { [weak self] in
             guard let self, let panel = self.panel,
-                  !self.presentation.isEditingAppearance, self.isDocked,
+                  !self.isAutoCollapseBlocked, self.isDocked,
                   !panel.frame.contains(NSEvent.mouseLocation),
                   self.dragStartFrame == nil
             else {

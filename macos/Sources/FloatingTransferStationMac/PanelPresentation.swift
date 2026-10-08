@@ -99,8 +99,11 @@ final class PanelPresentation: ObservableObject {
     @Published private(set) var isExpanded = false
     @Published var isDockedLeft = false
     var isEditingAppearance = false
+    private var editingContentIDs = Set<UUID>()
+    var isEditingContent: Bool { !editingContentIDs.isEmpty }
 
     var onHoverChanged: ((Bool) -> Void)?
+    var onContentEditingChanged: ((Bool) -> Void)?
     var onVerticalDragChanged: ((NSPoint) -> Void)?
     var onVerticalDragEnded: (() -> Void)?
 
@@ -111,6 +114,13 @@ final class PanelPresentation: ObservableObject {
     func setExpanded(_ expanded: Bool) {
         guard isExpanded != expanded else { return }
         isExpanded = expanded
+    }
+
+    func setContentEditing(_ editing: Bool, itemID: UUID) {
+        let wasEditing = isEditingContent
+        if editing { editingContentIDs.insert(itemID) }
+        else { editingContentIDs.remove(itemID) }
+        if wasEditing != isEditingContent { onContentEditingChanged?(isEditingContent) }
     }
 
     func handleVerticalDragChanged(gestureStartMouse: NSPoint) {
@@ -125,9 +135,11 @@ final class PanelPresentation: ObservableObject {
 struct PanelInteractionPolicy {
     static func shouldCollapse(
         pressedMouseButtons: Int,
-        hasAttachedSheet: Bool
+        hasAttachedSheet: Bool,
+        isEditingText: Bool = false,
+        isPointerInside: Bool = false
     ) -> Bool {
-        pressedMouseButtons == 0 && !hasAttachedSheet
+        pressedMouseButtons == 0 && !hasAttachedSheet && !isEditingText && !isPointerInside
     }
 
     static func shouldScheduleCollapseAfterDrag(
@@ -140,10 +152,13 @@ struct PanelInteractionPolicy {
 }
 
 enum TextCardLayout {
+    static let titleFontSize: CGFloat = 14
+    static let bodyFontSize: CGFloat = 12
+
     static func twoLineHeight(text: String, width: CGFloat) -> CGFloat {
         // Measuring two lines must not generate glyphs for an entire long document.
         // The reader/clipboard/drag still retain the full original text.
-        let storage = NSTextStorage(string: String(text.prefix(600)), attributes: [.font: NSFont.systemFont(ofSize: 13)])
+        let storage = NSTextStorage(string: String(text.prefix(600)), attributes: [.font: NSFont.systemFont(ofSize: bodyFontSize)])
         let layout = NSLayoutManager()
         let container = NSTextContainer(size: NSSize(width: max(1, width), height: .greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
@@ -153,7 +168,7 @@ enum TextCardLayout {
         layout.ensureLayout(forBoundingRect: NSRect(x: 0, y: 0, width: max(1, width), height: 180), in: container)
 
         guard layout.numberOfGlyphs > 0 else {
-            return ceil(NSFont.systemFont(ofSize: 13).ascender - NSFont.systemFont(ofSize: 13).descender)
+            return ceil(NSFont.systemFont(ofSize: bodyFontSize).ascender - NSFont.systemFont(ofSize: bodyFontSize).descender)
         }
 
         var glyphIndex = 0
