@@ -14,6 +14,7 @@ enum FeatureTests {
     static func main() {
         let tests: [(String, () throws -> Void)] = [
             ("legacy settings, feature defaults, reload and invalid limits", testSettingsCompatibilityAndLimits),
+            ("DIY preferences persist independently and roll back failed writes", testInteractionPreferences),
             ("success feedback follows saved single and batched content", testSuccessFeedback),
             ("clipboard success feedback uses a private pasteboard", testClipboardFeedbackWithoutSystemClipboard),
             ("Inbox limit keeps old data until the next FIFO insertion", testInboxCapacityFIFOAndUnlimitedMode),
@@ -56,6 +57,8 @@ enum FeatureTests {
             try check(oldSettings.successSoundEnabled, "legacy settings did not default success sound to enabled")
             try check(oldSettings.inboxItemLimit == nil, "legacy settings did not default Inbox capacity to unlimited")
             try check(oldSettings.deletedCategoryIDs.isEmpty, "legacy settings invented deleted categories")
+            try check(oldSettings.textHoverExpansionEnabled && oldSettings.cardActionsInContextMenuOnly
+                          && oldSettings.cardHoverLiftEnabled, "legacy interaction defaults are incompatible")
             try check(oldSettings.panelWidth == 420 && oldSettings.customCategories == [BoardCategory(rawValue: "Custom-old")],
                       "legacy settings fields were lost")
 
@@ -124,6 +127,38 @@ enum FeatureTests {
             }
             try check(LocalStore(paths: paths).loadBoard().allSatisfy { $0.text != "不得保存" },
                       "failed board save appeared after the blocked path was restored")
+        }
+    }
+
+    private static func testInteractionPreferences() throws {
+        try withTemporaryStore { _, paths, store in
+            let model = BoardModel(store: store, monitorsClipboard: false)
+            model.addText("保留原始内容")
+            let originalItems = model.items
+            let keys: [WritableKeyPath<WindowSettings, Bool>] = [
+                \.textHoverExpansionEnabled, \.cardActionsInContextMenuOnly, \.cardHoverLiftEnabled
+            ]
+            for key in keys {
+                let before = model.settings
+                model.setInteractionOption(key, enabled: false)
+                var expected = before
+                expected[keyPath: key] = false
+                try check(model.settings == expected, "toggle changed unrelated settings")
+                try check(LocalStore(paths: paths).loadSettings() == expected, "toggle did not survive disk reload")
+            }
+            let reloaded = BoardModel(store: LocalStore(paths: paths), monitorsClipboard: false)
+            try check(reloaded.settings == model.settings && reloaded.items == originalItems,
+                      "DIY preferences changed board content or failed model reload")
+            try withBlockedWrite(at: paths.settingsFile) {
+                for key in keys {
+                    model.setInteractionOption(key, enabled: true)
+                    try check(!model.settings[keyPath: key], "failed save published an unsaved preference")
+                }
+            }
+            for key in keys { model.setInteractionOption(key, enabled: true) }
+            let restored = LocalStore(paths: paths).loadSettings()
+            try check(keys.allSatisfy { restored[keyPath: $0] }, "re-enabling preferences did not persist")
+            try check(model.items == originalItems, "settings mutation altered content")
         }
     }
 

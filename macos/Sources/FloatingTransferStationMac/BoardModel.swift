@@ -180,6 +180,23 @@ final class BoardModel: ObservableObject {
         }
     }
 
+    func setInteractionOption(_ key: WritableKeyPath<WindowSettings, Bool>, enabled: Bool) {
+        // Only interaction preferences belong here; do not expose a generic
+        // settings mutation path to controls with different side effects.
+        guard key == \WindowSettings.textHoverExpansionEnabled
+            || key == \WindowSettings.cardActionsInContextMenuOnly
+            || key == \WindowSettings.cardHoverLiftEnabled,
+              settings[keyPath: key] != enabled else { return }
+        var updated = settings
+        updated[keyPath: key] = enabled
+        do {
+            try store.saveSettings(updated)
+            settings = updated
+        } catch {
+            showStatus("交互设置未保存，请重试。")
+        }
+    }
+
     func captureCurrentClipboard() {
         capturePasteboard(force: true)
     }

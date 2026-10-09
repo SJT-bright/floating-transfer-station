@@ -13,13 +13,21 @@ final class TextCardDisclosure: ObservableObject {
     @Published private(set) var isExpanded = false
     private var isInside = false
     private var isProtected = false
+    private var automaticExpansionEnabled = true
     private var collapseWorkItem: DispatchWorkItem?
     private var generation = 0
 
     func enterDisclosure() {
         cancelPendingCollapse()
-        guard !isProtected else { return }
+        guard automaticExpansionEnabled, !isProtected else { return }
         isExpanded = true
+    }
+
+    func setAutomaticExpansionEnabled(_ enabled: Bool) {
+        guard automaticExpansionEnabled != enabled else { return }
+        automaticExpansionEnabled = enabled
+        cancelPendingCollapse()
+        if enabled && !isInside { scheduleCollapse() }
     }
 
     func toggle() {
@@ -49,11 +57,11 @@ final class TextCardDisclosure: ObservableObject {
 
     private func scheduleCollapse(after delay: TimeInterval = PanelMotionTiming.exitDelay) {
         cancelPendingCollapse()
-        guard isExpanded, !isInside, !isProtected else { return }
+        guard automaticExpansionEnabled, isExpanded, !isInside, !isProtected else { return }
         let expectedGeneration = generation
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.generation == expectedGeneration,
-                  !self.isInside, !self.isProtected else { return }
+                  self.automaticExpansionEnabled, !self.isInside, !self.isProtected else { return }
             self.collapseWorkItem = nil
             if NSEvent.pressedMouseButtons != 0 {
                 self.scheduleCollapse(after: PanelMotionTiming.retryDelay)

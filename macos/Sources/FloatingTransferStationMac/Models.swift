@@ -229,6 +229,9 @@ struct WindowSettings: Codable, Equatable {
     var successSoundEnabled: Bool
     var inboxItemLimit: Int?
     var deletedCategoryIDs: [String]
+    var textHoverExpansionEnabled: Bool = true
+    var cardActionsInContextMenuOnly: Bool = true
+    var cardHoverLiftEnabled: Bool = true
 
     static let `default` = WindowSettings(
         panelWidth: 360,
@@ -276,6 +279,9 @@ struct WindowSettings: Codable, Equatable {
         case successSoundEnabled
         case inboxItemLimit
         case deletedCategoryIDs
+        case textHoverExpansionEnabled
+        case cardActionsInContextMenuOnly
+        case cardHoverLiftEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -295,5 +301,8 @@ struct WindowSettings: Codable, Equatable {
         let decodedLimit = try container.decodeIfPresent(Int.self, forKey: .inboxItemLimit)
         inboxItemLimit = decodedLimit.flatMap { $0 > 0 ? $0 : nil }
         deletedCategoryIDs = try container.decodeIfPresent([String].self, forKey: .deletedCategoryIDs) ?? []
+        textHoverExpansionEnabled = try container.decodeIfPresent(Bool.self, forKey: .textHoverExpansionEnabled) ?? true
+        cardActionsInContextMenuOnly = try container.decodeIfPresent(Bool.self, forKey: .cardActionsInContextMenuOnly) ?? true
+        cardHoverLiftEnabled = try container.decodeIfPresent(Bool.self, forKey: .cardHoverLiftEnabled) ?? true
     }
 }

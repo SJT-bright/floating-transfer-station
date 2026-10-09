@@ -22,6 +22,7 @@ enum MacCoreTests {
         try testPanelStaysExpandedWhileDragging()
         try testPanelStaysExpandedWhileEditing()
         try testCardHoverDisclosureCancelsAndResumes()
+        try testManualCardDisclosureIgnoresHover()
         try testCopyImageToAnotherCategoryPreservesSourceAndPersists()
         try testImageDragProviderExportsImageAndFile()
         try testClipboardAlwaysGoesToInbox()
@@ -42,7 +43,7 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (32 tests)")
+        print("macOS core tests passed (33 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -722,6 +723,30 @@ enum MacCoreTests {
             pressedMouseButtons: 0, hasAttachedSheet: false,
             isEditingText: false, isPointerInside: false
         ), "automatic collapse did not resume after editing ended")
+    }
+
+    private static func testManualCardDisclosureIgnoresHover() throws {
+        let card = TextCardDisclosure()
+        card.setAutomaticExpansionEnabled(false)
+        card.handleCardHover(true)
+        card.enterDisclosure()
+        try check(!card.isExpanded, "disabled hover still expanded a card")
+        card.toggle()
+        try check(card.isExpanded, "manual toggle stopped working with hover disabled")
+        card.handleCardHover(false)
+        RunLoop.current.run(until: Date().addingTimeInterval(PanelMotionTiming.exitDelay + 0.08))
+        try check(card.isExpanded, "manual expansion collapsed on mouse exit")
+        card.setAutomaticExpansionEnabled(true)
+        card.setAutomaticExpansionEnabled(false)
+        RunLoop.current.run(until: Date().addingTimeInterval(PanelMotionTiming.exitDelay + 0.08))
+        try check(card.isExpanded, "disabling hover failed to cancel a pending collapse")
+        card.toggle()
+        try check(!card.isExpanded, "manual collapse stopped working")
+        card.setAutomaticExpansionEnabled(true)
+        card.handleCardHover(true)
+        card.enterDisclosure()
+        card.handleCardHover(false)
+        try waitUntil { !card.isExpanded }
     }
 
     private static func testCardHoverDisclosureCancelsAndResumes() throws {

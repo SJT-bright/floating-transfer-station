@@ -621,7 +621,7 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "circle.lefthalf.filled")
             }
-            .help("设置：外观、成功音效、待分类容量")
+                        .help("设置：交互 DIY、外观、成功音效、待分类容量")
             .accessibilityLabel("设置")
             .popover(isPresented: $showsAppearance, arrowEdge: .leading) {
                 AppearanceEditor(model: model)
@@ -1023,10 +1023,30 @@ private struct AppearanceEditor: View {
         }
     }
 
+    private func interactionToggle(_ title: String, key: WritableKeyPath<WindowSettings, Bool>) -> some View {
+        Toggle(title, isOn: Binding(
+            get: { model.settings[keyPath: key] },
+            set: { model.setInteractionOption(key, enabled: $0) }
+        ))
+        .toggleStyle(.switch)
+        .accessibilityLabel(title)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("设置与外观").font(.headline)
+                Text("交互 DIY").font(.subheadline.weight(.semibold))
+                interactionToggle("文字悬停自动展开", key: \.textHoverExpansionEnabled)
+                Text("开启：移入标题展开、移出卡片收起；关闭：用右键菜单或快捷按钮手动展开和收起。")
+                    .font(.caption).foregroundStyle(.secondary)
+                interactionToggle("操作仅放在右键菜单", key: \.cardActionsInContextMenuOnly)
+                Text("关闭后恢复标题旁的快捷按钮，右键菜单始终保留。")
+                    .font(.caption).foregroundStyle(.secondary)
+                interactionToggle("卡片悬停浮起与阴影", key: \.cardHoverLiftEnabled)
+                Text("文字、图片和文件卡片统一提示；编辑、菜单和拖动期间暂停浮起。系统减少动态效果时只保留高亮和阴影。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Divider()
                 control("文字深浅", key: \.textBrightness, ends: "左侧黑色 · 右侧白色")
                 control("文字不透明度", key: \.textOpacity, range: 0.2...1, ends: "左侧淡 · 右侧清晰")
                 Divider()
@@ -1223,6 +1243,7 @@ private struct ItemCard: View {
     @State private var nameDraft = ""
     @State private var isRenamingItem = false
     @State private var isShowingContextMenu = false
+    @State private var isCardHovered = false
     @FocusState private var isEditingName: Bool
 
     @Environment(\.colorScheme) private var colorScheme
@@ -1242,6 +1263,12 @@ private struct ItemCard: View {
         !(item.name?.isEmpty ?? true)
     }
 
+    private var isCardLifted: Bool {
+        model.settings.cardHoverLiftEnabled && isCardHovered
+            && !isRenamingItem && !isEditingName && !isShowingContextMenu
+            && !showsFullText && activeTextDragID == nil
+    }
+
     private var disclosureAnimation: Animation {
         disclosure.isExpanded
             ? .easeOut(duration: PanelMotionTiming.revealDuration(reduceMotion: reduceMotion))
@@ -1250,46 +1277,55 @@ private struct ItemCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Group {
-                if isRenamingItem {
-                    TextField("输入名称", text: $nameDraft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
-                        .focused($isEditingName)
-                        .onAppear {
-                            // Focus only after SwiftUI has installed the new editor.
-                            // Otherwise the title's mouse-up can restore the search field.
-                            DispatchQueue.main.async {
-                                if isRenamingItem { isEditingName = true }
+            HStack(spacing: 5) {
+                Group {
+                    if isRenamingItem {
+                        TextField("输入名称", text: $nameDraft)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
+                            .focused($isEditingName)
+                            .onAppear {
+                                // Focus only after SwiftUI has installed the new editor.
+                                // Otherwise the title's mouse-up can restore the search field.
+                                DispatchQueue.main.async {
+                                    if isRenamingItem { isEditingName = true }
+                                }
                             }
-                        }
-                        .onSubmit { finishNaming() }
-                        .onChange(of: isEditingName) { focused in
-                            if !focused { finishNaming() }
-                        }
-                } else if item.kind == .text, hasName, let name = item.name {
-                    draggableTextTitle(name, onClick: beginNaming)
-                        .background(StationHoverTracker { hovered in
-                            if hovered && activeTextDragID == nil && !isRenamingItem && !isShowingContextMenu {
-                                disclosure.enterDisclosure()
+                            .onSubmit { finishNaming() }
+                            .onChange(of: isEditingName) { focused in
+                                if !focused { finishNaming() }
                             }
-                        })
-                        .help("点击标题改名；移入标题展开正文，移出卡片收起；右键显示操作；拖动标题排序或拖出全文")
-                } else if item.kind == .text {
-                    draggableTextTitle("添加名称", onClick: beginNaming)
-                        .foregroundStyle(textColor.opacity(0.7))
-                        .accessibilityAddTraits(.isButton)
-                        .help("点击添加名称；右键显示操作；拖动标题排序或拖出全文")
-                } else if let name = item.name, hasName {
-                    titleButton(name)
-                } else {
-                    titleButton("添加名称")
-                        .foregroundStyle(textColor.opacity(0.7))
+                    } else if item.kind == .text, hasName, let name = item.name {
+                        draggableTextTitle(name, onClick: beginNaming)
+                            .background(StationHoverTracker { hovered in
+                                if hovered && model.settings.textHoverExpansionEnabled
+                                    && activeTextDragID == nil && !isRenamingItem && !isShowingContextMenu {
+                                    disclosure.enterDisclosure()
+                                }
+                            })
+                            .help(model.settings.textHoverExpansionEnabled
+                                ? "点击标题改名；移入标题展开正文，移出卡片收起；右键显示操作；拖动标题排序或拖出全文"
+                                : "点击标题改名；右键展开或收起正文；拖动标题排序或拖出全文")
+                    } else if item.kind == .text {
+                        draggableTextTitle("添加名称", onClick: beginNaming)
+                            .foregroundStyle(textColor.opacity(0.7))
+                            .accessibilityAddTraits(.isButton)
+                            .help("点击添加名称；右键显示操作；拖动标题排序或拖出全文")
+                    } else if let name = item.name, hasName {
+                        titleButton(name)
+                    } else {
+                        titleButton("添加名称")
+                            .foregroundStyle(textColor.opacity(0.7))
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                .layoutPriority(1)
+                .onAppear { nameDraft = item.name ?? "" }
+                .onDisappear { finishNaming() }
+                if !model.settings.cardActionsInContextMenuOnly && !isRenamingItem {
+                    inlineActions
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
-            .onAppear { nameDraft = item.name ?? "" }
-            .onDisappear { finishNaming() }
 
             if showsCategory {
                 Text(model.displayName(for: item.category))
@@ -1340,7 +1376,12 @@ private struct ItemCard: View {
         // this card's animated height contracts.
         .clipped()
         .animation(disclosureAnimation, value: disclosure.isExpanded)
-        .background(StationHoverTracker { disclosure.handleCardHover($0) })
+        .onAppear {
+            disclosure.setAutomaticExpansionEnabled(model.settings.textHoverExpansionEnabled)
+        }
+        .onChange(of: model.settings.textHoverExpansionEnabled) { enabled in
+            disclosure.setAutomaticExpansionEnabled(enabled)
+        }
         .onChange(of: isRenamingItem) { _ in refreshDisclosureProtection() }
         .onChange(of: isEditingName) { _ in refreshDisclosureProtection() }
         .onChange(of: showsFullText) { _ in refreshDisclosureProtection() }
@@ -1348,6 +1389,7 @@ private struct ItemCard: View {
         .onChange(of: activeTextDragID) { _ in refreshDisclosureProtection() }
         .onDisappear {
             disclosure.cancelPendingCollapse()
+            isCardHovered = false
             presentation.setContentEditing(false, itemID: item.id)
         }
         .foregroundStyle(textColor)
@@ -1355,22 +1397,31 @@ private struct ItemCard: View {
             StationGlassLens(cornerRadius: 16,
                 strength: reduceTransparency ? 0 : appearance.glassIntensity,
                 tint: Color(white: appearance.backgroundBrightness),
-                tintOpacity: appearance.backgroundOpacity * 0.20)
+                tintOpacity: appearance.backgroundOpacity * 0.20 + (isCardLifted ? 0.08 : 0))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(
                     item.isPinned
                         ? Color.accentColor.opacity(0.55)
-                        : Color.clear
+                        : textColor.opacity(isCardLifted ? 0.25 : 0)
                 )
+                .allowsHitTesting(false)
         )
         .shadow(
-            color: Color.black.opacity(colorScheme == .dark ? 0.16 : 0.08),
-            radius: 10,
+            color: Color.black.opacity(isCardLifted ? 0.24 : colorScheme == .dark ? 0.16 : 0.08),
+            radius: isCardLifted ? 14 : 10,
             x: 0,
-            y: 4
+            y: isCardLifted ? 7 : 4
         )
+        .offset(y: isCardLifted && !reduceMotion ? -2 : 0)
+        .animation(reduceMotion ? .easeOut(duration: 0.12)
+            : .interactiveSpring(response: 0.25, dampingFraction: 1), value: isCardLifted)
+        // Track the original, stationary bounds, not the lifted visual frame.
+        .background(StationHoverTracker { hovered in
+            isCardHovered = hovered
+            disclosure.handleCardHover(hovered)
+        })
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .background {
             GeometryReader { geometry in
@@ -1461,6 +1512,53 @@ private struct ItemCard: View {
 
     private func saveName() {
         model.renameItem(item.id, to: nameDraft)
+    }
+
+    private var inlineActions: some View {
+        HStack(spacing: 4) {
+            if item.kind == .text {
+                if hasName {
+                    cardAction(disclosure.isExpanded ? "收起正文" : "展开正文",
+                               symbol: disclosure.isExpanded ? "chevron.down" : "chevron.right") {
+                        disclosure.toggle()
+                    }
+                }
+                cardAction("查看全文", symbol: "doc.text.magnifyingglass") { showsFullText = true }
+            }
+            cardAction(item.isPinned ? "取消置顶" : "置顶", symbol: item.isPinned ? "pin.fill" : "pin") {
+                model.togglePinned(item.id)
+            }
+            cardAction("复制", symbol: "doc.on.doc") { model.copyToClipboard(item) }
+            if item.kind != .file {
+                Menu {
+                    ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
+                        Button(model.displayName(for: category)) { model.move(item.id, to: category) }
+                    }
+                } label: {
+                    Image(systemName: "folder").frame(width: 20, height: 24)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("移动到分类")
+                .accessibilityLabel("移动到分类")
+            } else if let url = model.fileURL(for: item) {
+                cardAction("在访达中显示", symbol: "folder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+            cardAction("删除", symbol: "trash") { model.delete(item.id) }
+        }
+        .font(.system(size: 14))
+        .fixedSize()
+    }
+
+    private func cardAction(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).frame(width: 20, height: 24)
+        }
+        .buttonStyle(StationButtonStyle())
+        .help(title)
+        .accessibilityLabel(title)
     }
 
     private func titleButton(_ title: String) -> some View {
