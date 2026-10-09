@@ -232,6 +232,7 @@ struct WindowSettings: Codable, Equatable {
     var textHoverExpansionEnabled: Bool = true
     var cardActionsInContextMenuOnly: Bool = true
     var cardHoverLiftEnabled: Bool = true
+    var cardCopyPinButtonsEnabled: Bool = true
 
     static let `default` = WindowSettings(
         panelWidth: 360,
@@ -282,6 +283,7 @@ struct WindowSettings: Codable, Equatable {
         case textHoverExpansionEnabled
         case cardActionsInContextMenuOnly
         case cardHoverLiftEnabled
+        case cardCopyPinButtonsEnabled
     }
 
     init(from decoder: Decoder) throws {
@@ -304,5 +306,6 @@ struct WindowSettings: Codable, Equatable {
         textHoverExpansionEnabled = try container.decodeIfPresent(Bool.self, forKey: .textHoverExpansionEnabled) ?? true
         cardActionsInContextMenuOnly = try container.decodeIfPresent(Bool.self, forKey: .cardActionsInContextMenuOnly) ?? true
         cardHoverLiftEnabled = try container.decodeIfPresent(Bool.self, forKey: .cardHoverLiftEnabled) ?? true
+        cardCopyPinButtonsEnabled = try container.decodeIfPresent(Bool.self, forKey: .cardCopyPinButtonsEnabled) ?? true
     }
 }

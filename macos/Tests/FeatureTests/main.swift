@@ -58,7 +58,8 @@ enum FeatureTests {
             try check(oldSettings.inboxItemLimit == nil, "legacy settings did not default Inbox capacity to unlimited")
             try check(oldSettings.deletedCategoryIDs.isEmpty, "legacy settings invented deleted categories")
             try check(oldSettings.textHoverExpansionEnabled && oldSettings.cardActionsInContextMenuOnly
-                          && oldSettings.cardHoverLiftEnabled, "legacy interaction defaults are incompatible")
+                          && oldSettings.cardHoverLiftEnabled && oldSettings.cardCopyPinButtonsEnabled,
+                      "legacy interaction defaults are incompatible")
             try check(oldSettings.panelWidth == 420 && oldSettings.customCategories == [BoardCategory(rawValue: "Custom-old")],
                       "legacy settings fields were lost")
 
@@ -136,7 +137,8 @@ enum FeatureTests {
             model.addText("保留原始内容")
             let originalItems = model.items
             let keys: [WritableKeyPath<WindowSettings, Bool>] = [
-                \.textHoverExpansionEnabled, \.cardActionsInContextMenuOnly, \.cardHoverLiftEnabled
+                \.textHoverExpansionEnabled, \.cardActionsInContextMenuOnly, \.cardHoverLiftEnabled,
+                \.cardCopyPinButtonsEnabled
             ]
             for key in keys {
                 let before = model.settings

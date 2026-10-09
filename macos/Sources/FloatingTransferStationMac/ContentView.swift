@@ -1040,8 +1040,11 @@ private struct AppearanceEditor: View {
                 interactionToggle("文字悬停自动展开", key: \.textHoverExpansionEnabled)
                 Text("开启：移入标题展开、移出卡片收起；关闭：用右键菜单或快捷按钮手动展开和收起。")
                     .font(.caption).foregroundStyle(.secondary)
-                interactionToggle("操作仅放在右键菜单", key: \.cardActionsInContextMenuOnly)
-                Text("关闭后恢复标题旁的快捷按钮，右键菜单始终保留。")
+                interactionToggle("显示复制与置顶按钮", key: \.cardCopyPinButtonsEnabled)
+                Text("每条文字、图片、文件的标题旁显示两个常用按钮，可单独关闭。")
+                    .font(.caption).foregroundStyle(.secondary)
+                interactionToggle("其他操作仅放在右键菜单", key: \.cardActionsInContextMenuOnly)
+                Text("关闭后再显示全文、展开、移动和删除等按钮，右键菜单始终保留。")
                     .font(.caption).foregroundStyle(.secondary)
                 interactionToggle("卡片悬停浮起与阴影", key: \.cardHoverLiftEnabled)
                 Text("文字、图片和文件卡片统一提示；编辑、菜单和拖动期间暂停浮起。系统减少动态效果时只保留高亮和阴影。")
@@ -1322,7 +1325,7 @@ private struct ItemCard: View {
                 .layoutPriority(1)
                 .onAppear { nameDraft = item.name ?? "" }
                 .onDisappear { finishNaming() }
-                if !model.settings.cardActionsInContextMenuOnly && !isRenamingItem {
+                if !isRenamingItem && (model.settings.cardCopyPinButtonsEnabled || !model.settings.cardActionsInContextMenuOnly) {
                     inlineActions
                 }
             }
@@ -1516,7 +1519,7 @@ private struct ItemCard: View {
 
     private var inlineActions: some View {
         HStack(spacing: 4) {
-            if item.kind == .text {
+            if !model.settings.cardActionsInContextMenuOnly && item.kind == .text {
                 if hasName {
                     cardAction(disclosure.isExpanded ? "收起正文" : "展开正文",
                                symbol: disclosure.isExpanded ? "chevron.down" : "chevron.right") {
@@ -1525,28 +1528,32 @@ private struct ItemCard: View {
                 }
                 cardAction("查看全文", symbol: "doc.text.magnifyingglass") { showsFullText = true }
             }
-            cardAction(item.isPinned ? "取消置顶" : "置顶", symbol: item.isPinned ? "pin.fill" : "pin") {
-                model.togglePinned(item.id)
+            if model.settings.cardCopyPinButtonsEnabled {
+                cardAction(item.isPinned ? "取消置顶" : "置顶", symbol: item.isPinned ? "pin.fill" : "pin") {
+                    model.togglePinned(item.id)
+                }
+                cardAction("复制", symbol: "doc.on.doc") { model.copyToClipboard(item) }
             }
-            cardAction("复制", symbol: "doc.on.doc") { model.copyToClipboard(item) }
-            if item.kind != .file {
-                Menu {
-                    ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
-                        Button(model.displayName(for: category)) { model.move(item.id, to: category) }
+            if !model.settings.cardActionsInContextMenuOnly {
+                if item.kind != .file {
+                    Menu {
+                        ForEach(model.categories.filter { $0 != item.category && $0 != .files }) { category in
+                            Button(model.displayName(for: category)) { model.move(item.id, to: category) }
+                        }
+                    } label: {
+                        Image(systemName: "folder").frame(width: 20, height: 24)
                     }
-                } label: {
-                    Image(systemName: "folder").frame(width: 20, height: 24)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("移动到分类")
+                    .accessibilityLabel("移动到分类")
+                } else if let url = model.fileURL(for: item) {
+                    cardAction("在访达中显示", symbol: "folder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    }
                 }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("移动到分类")
-                .accessibilityLabel("移动到分类")
-            } else if let url = model.fileURL(for: item) {
-                cardAction("在访达中显示", symbol: "folder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                }
+                cardAction("删除", symbol: "trash") { model.delete(item.id) }
             }
-            cardAction("删除", symbol: "trash") { model.delete(item.id) }
         }
         .font(.system(size: 14))
         .fixedSize()

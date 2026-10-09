@@ -185,7 +185,8 @@ final class BoardModel: ObservableObject {
         // settings mutation path to controls with different side effects.
         guard key == \WindowSettings.textHoverExpansionEnabled
             || key == \WindowSettings.cardActionsInContextMenuOnly
-            || key == \WindowSettings.cardHoverLiftEnabled,
+            || key == \WindowSettings.cardHoverLiftEnabled
+            || key == \WindowSettings.cardCopyPinButtonsEnabled,
               settings[keyPath: key] != enabled else { return }
         var updated = settings
         updated[keyPath: key] = enabled
