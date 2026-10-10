@@ -3,6 +3,7 @@ import Combine
 import QuartzCore
 
 enum PanelMotionTiming {
+    static let textHoverDelay: TimeInterval = 1.0
     static let exitDelay: TimeInterval = 0.38
     static let retryDelay: TimeInterval = 0.12
     static func revealDuration(reduceMotion: Bool) -> TimeInterval { reduceMotion ? 0.12 : 0.24 }
@@ -12,25 +13,45 @@ enum PanelMotionTiming {
 final class TextCardDisclosure: ObservableObject {
     @Published private(set) var isExpanded = false
     private var isInside = false
+    private var isTitleInside = false
     private var isProtected = false
     private var automaticExpansionEnabled = true
+    private var expansionWorkItem: DispatchWorkItem?
+    private var expansionGeneration = 0
     private var collapseWorkItem: DispatchWorkItem?
     private var generation = 0
 
     func enterDisclosure() {
+        cancelPendingExpansion()
         cancelPendingCollapse()
         guard automaticExpansionEnabled, !isProtected else { return }
         isExpanded = true
     }
 
+    func handleTitleHover(_ inside: Bool) {
+        guard isTitleInside != inside else { return }
+        isTitleInside = inside
+        if inside {
+            cancelPendingCollapse()
+            scheduleExpansion()
+        } else {
+            cancelPendingExpansion()
+        }
+    }
+
     func setAutomaticExpansionEnabled(_ enabled: Bool) {
         guard automaticExpansionEnabled != enabled else { return }
         automaticExpansionEnabled = enabled
+        cancelPendingExpansion()
         cancelPendingCollapse()
-        if enabled && !isInside { scheduleCollapse() }
+        if enabled {
+            if isTitleInside { scheduleExpansion() }
+            else if !isInside { scheduleCollapse() }
+        }
     }
 
     func toggle() {
+        cancelPendingExpansion()
         cancelPendingCollapse()
         guard !isProtected else { return }
         isExpanded.toggle()
@@ -39,14 +60,49 @@ final class TextCardDisclosure: ObservableObject {
     func handleCardHover(_ inside: Bool) {
         isInside = inside
         if inside { cancelPendingCollapse() }
-        else { scheduleCollapse() }
+        else {
+            isTitleInside = false
+            cancelPendingExpansion()
+            scheduleCollapse()
+        }
     }
 
     func setProtected(_ protected: Bool) {
         guard isProtected != protected else { return }
         isProtected = protected
+        cancelPendingExpansion()
         if protected { cancelPendingCollapse() }
+        else if isTitleInside { scheduleExpansion() }
         else if !isInside { scheduleCollapse() }
+    }
+
+    func cancelPendingExpansion() {
+        expansionGeneration &+= 1
+        expansionWorkItem?.cancel()
+        expansionWorkItem = nil
+    }
+
+    private func scheduleExpansion() {
+        // Repeated tracking callbacks must not reset continuous dwell time.
+        guard automaticExpansionEnabled, isTitleInside, !isProtected, !isExpanded,
+              expansionWorkItem == nil else { return }
+        let expectedGeneration = expansionGeneration
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.expansionGeneration == expectedGeneration,
+                  self.automaticExpansionEnabled, self.isTitleInside,
+                  !self.isProtected, !self.isExpanded else { return }
+            self.expansionWorkItem = nil
+            if NSEvent.pressedMouseButtons != 0 {
+                // A pressed mouse may be beginning a drag. Require a new full
+                // dwell instead of expanding in the middle of that operation.
+                self.scheduleExpansion()
+            } else {
+                self.cancelPendingCollapse()
+                self.isExpanded = true
+            }
+        }
+        expansionWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + PanelMotionTiming.textHoverDelay, execute: work)
     }
 
     func cancelPendingCollapse() {
@@ -73,7 +129,10 @@ final class TextCardDisclosure: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    deinit { collapseWorkItem?.cancel() }
+    deinit {
+        expansionWorkItem?.cancel()
+        collapseWorkItem?.cancel()
+    }
 }
 
 enum PanelRevealMotion {

@@ -1038,7 +1038,7 @@ private struct AppearanceEditor: View {
                 Text("设置与外观").font(.headline)
                 Text("交互 DIY").font(.subheadline.weight(.semibold))
                 interactionToggle("文字悬停自动展开", key: \.textHoverExpansionEnabled)
-                Text("开启：移入标题展开、移出卡片收起；关闭：用右键菜单或快捷按钮手动展开和收起。")
+                Text("开启：在标题上停留满 1 秒才展开，移出卡片收起；关闭：用右键菜单或快捷按钮手动展开和收起。")
                     .font(.caption).foregroundStyle(.secondary)
                 interactionToggle("显示复制与置顶按钮", key: \.cardCopyPinButtonsEnabled)
                 Text("每条文字、图片、文件的标题旁显示两个常用按钮，可单独关闭。")
@@ -1301,13 +1301,11 @@ private struct ItemCard: View {
                     } else if item.kind == .text, hasName, let name = item.name {
                         draggableTextTitle(name, onClick: beginNaming)
                             .background(StationHoverTracker { hovered in
-                                if hovered && model.settings.textHoverExpansionEnabled
-                                    && activeTextDragID == nil && !isRenamingItem && !isShowingContextMenu {
-                                    disclosure.enterDisclosure()
-                                }
+                                disclosure.handleTitleHover(hovered && model.settings.textHoverExpansionEnabled
+                                    && activeTextDragID == nil && !isRenamingItem && !isShowingContextMenu)
                             })
                             .help(model.settings.textHoverExpansionEnabled
-                                ? "点击标题改名；移入标题展开正文，移出卡片收起；右键显示操作；拖动标题排序或拖出全文"
+                                ? "点击标题改名；停留满 1 秒展开正文，移出卡片收起；右键显示操作；拖动标题排序或拖出全文"
                                 : "点击标题改名；右键展开或收起正文；拖动标题排序或拖出全文")
                     } else if item.kind == .text {
                         draggableTextTitle("添加名称", onClick: beginNaming)
@@ -1391,6 +1389,7 @@ private struct ItemCard: View {
         .onChange(of: isShowingContextMenu) { _ in refreshDisclosureProtection() }
         .onChange(of: activeTextDragID) { _ in refreshDisclosureProtection() }
         .onDisappear {
+            disclosure.handleTitleHover(false)
             disclosure.cancelPendingCollapse()
             isCardHovered = false
             presentation.setContentEditing(false, itemID: item.id)

@@ -23,6 +23,11 @@ enum MacCoreTests {
         try testPanelStaysExpandedWhileEditing()
         try testCardHoverDisclosureCancelsAndResumes()
         try testManualCardDisclosureIgnoresHover()
+        try testTitleHoverRequiresContinuousOneSecond()
+        try testLeavingTitleCancelsExpansionInsideCard()
+        try testTitleHoverReentryRestartsDelay()
+        try testRepeatedTitleHoverDoesNotRestartDelay()
+        try testTitleHoverCancellationAndProtection()
         try testCopyImageToAnotherCategoryPreservesSourceAndPersists()
         try testImageDragProviderExportsImageAndFile()
         try testClipboardAlwaysGoesToInbox()
@@ -43,7 +48,7 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (33 tests)")
+        print("macOS core tests passed (38 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -778,6 +783,101 @@ enum MacCoreTests {
         try check(PanelRevealMotion.animation(reduceMotion: false).duration == PanelMotionTiming.revealDuration(reduceMotion: false)
             && PanelCollapseMotion.animation(reduceMotion: false).duration == PanelMotionTiming.collapseDuration(reduceMotion: false),
             "card and window motion durations diverged")
+    }
+
+    private static func runMainLoop(for interval: TimeInterval) {
+        let deadline = Date().addingTimeInterval(interval)
+        while Date() < deadline {
+            RunLoop.main.run(until: min(deadline, Date().addingTimeInterval(0.01)))
+        }
+    }
+
+    private static func testTitleHoverRequiresContinuousOneSecond() throws {
+        try check(Thread.isMainThread, "hover timing tests must run on the main thread")
+        try check(PanelMotionTiming.textHoverDelay == 1.0, "title hover must wait a full second")
+        let card = TextCardDisclosure()
+        card.handleCardHover(true)
+        card.handleTitleHover(true)
+        runMainLoop(for: 0.70)
+        try check(!card.isExpanded, "title hover expanded before one second")
+        runMainLoop(for: 0.40)
+        try check(card.isExpanded, "continuous one-second title hover did not expand")
+    }
+
+    private static func testLeavingTitleCancelsExpansionInsideCard() throws {
+        let card = TextCardDisclosure()
+        card.handleCardHover(true)
+        card.handleTitleHover(true)
+        runMainLoop(for: 0.30)
+        card.handleTitleHover(false)
+        // The pointer is still in the card, but no longer over its title.
+        runMainLoop(for: 0.80)
+        try check(!card.isExpanded, "leaving only the title retained its pending expansion")
+    }
+
+    private static func testTitleHoverReentryRestartsDelay() throws {
+        let card = TextCardDisclosure()
+        card.handleCardHover(true)
+        card.handleTitleHover(true)
+        runMainLoop(for: 0.60)
+        card.handleTitleHover(false)
+        card.handleTitleHover(true)
+        runMainLoop(for: 0.70)
+        try check(!card.isExpanded, "re-entered title inherited an earlier hover timer")
+        runMainLoop(for: 0.40)
+        try check(card.isExpanded, "re-entered title failed to expand after a new full second")
+    }
+
+    private static func testRepeatedTitleHoverDoesNotRestartDelay() throws {
+        let card = TextCardDisclosure()
+        card.handleCardHover(true)
+        card.handleTitleHover(true)
+        runMainLoop(for: 0.60)
+        card.handleTitleHover(true)
+        card.handleTitleHover(true)
+        runMainLoop(for: 0.50)
+        try check(card.isExpanded, "duplicate hover notifications restarted continuous dwell")
+    }
+
+    private static func testTitleHoverCancellationAndProtection() throws {
+        let disabled = TextCardDisclosure()
+        let protected = TextCardDisclosure()
+        let manual = TextCardDisclosure()
+        let exited = TextCardDisclosure()
+        let disappeared = TextCardDisclosure()
+        var released: TextCardDisclosure? = TextCardDisclosure()
+        weak let weakReleased = released
+        for card in [disabled, protected, manual, exited, disappeared] {
+            card.handleCardHover(true)
+            card.handleTitleHover(true)
+        }
+        released?.handleCardHover(true)
+        released?.handleTitleHover(true)
+        runMainLoop(for: 0.30)
+        disabled.setAutomaticExpansionEnabled(false)
+        protected.setProtected(true)
+        manual.toggle()
+        try check(manual.isExpanded, "manual expansion incorrectly waited for hover delay")
+        manual.toggle()
+        exited.handleCardHover(false)
+        disappeared.cancelPendingExpansion()
+        released = nil
+        try check(weakReleased == nil, "pending expansion retained a disappeared card")
+        runMainLoop(for: 0.80)
+        try check(!disabled.isExpanded, "disabled auto-expansion timer still fired")
+        try check(!protected.isExpanded, "protected card expanded during editing, reading or dragging")
+        try check(!manual.isExpanded, "pending hover reopened a manually collapsed card")
+        try check(!exited.isExpanded, "pending title hover expanded after leaving the card")
+        try check(!disappeared.isExpanded, "disappeared card's cancelled expansion still fired")
+
+        disabled.setAutomaticExpansionEnabled(true)
+        protected.setProtected(false)
+        runMainLoop(for: 0.70)
+        try check(!disabled.isExpanded && !protected.isExpanded,
+                  "enabling hover or releasing protection inherited the old dwell time")
+        runMainLoop(for: 0.40)
+        try check(disabled.isExpanded && protected.isExpanded,
+                  "auto-expansion failed to resume after a new full second")
     }
 
     private static func testImageDragProviderExportsImageAndFile() throws {
