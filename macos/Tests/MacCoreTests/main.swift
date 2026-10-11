@@ -985,6 +985,7 @@ enum MacCoreTests {
         pasteboard.setString(exportURL.absoluteString, forType: .fileURL)
         model.selectCategory(.reference)
         try check(model.copyDraggedImage(from: pasteboard, to: .reference), "native pasteboard copy failed")
+        try waitUntil { model.orderedItems(in: .reference).count == 1 }
 
         let remainingSource = try require(
             model.orderedItems(in: .inbox).first,

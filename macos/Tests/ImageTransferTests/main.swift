@@ -14,7 +14,10 @@ enum ImageTransferTests {
         var tests: [(String, () throws -> Void)] = [
             ("PNG import and category copies retain original ICC and metadata bytes", testPNGImportAndCopyPreserveOriginalBytes),
             ("Changed source does not reuse or overwrite a previous drag export", testChangedSourceKeepsPreviousExport),
-            ("Interleaved providers return their own exact PNG and file URL", testInterleavedProvidersKeepImageIdentity)
+            ("Interleaved providers return their own exact PNG and file URL", testInterleavedProvidersKeepImageIdentity),
+            ("Multi-selection drags exact ordered original PNGs and copies once", testMultiImageDrag),
+            ("Multi-image failures do not save partial copies", testMultiImageFailure),
+            ("Batch save failure rolls back all images and selection", testMultiImageSaveFailure)
         ]
         #if IMAGE_TRANSFER_SNAPSHOT_API
         tests.append(("Explicit rendered-image snapshot stays authoritative", testExplicitSnapshotIsAuthoritative))
@@ -82,6 +85,135 @@ enum ImageTransferTests {
             try check(try store.exportImageForDrag(relativePath: path) == secondExport, "same current bytes generated an unstable export URL")
             try check(store.isImageDragURL(secondExport, relativePath: path), "current versioned export rejected for category copying")
             try check(!store.isImageDragURL(firstExport, relativePath: path), "stale export accepted as current category image")
+        }
+    }
+
+    private static func testMultiImageDrag() throws {
+        try withTemporaryStore { _, store in
+            let bytes = try [pngFixture(red: 0.9, green: 0.1, blue: 0.2, marker: "batch-first"),
+                             pngFixture(red: 0.1, green: 0.2, blue: 0.9, marker: "batch-second")]
+            var seeds: [BoardItem] = []
+            for (index, data) in bytes.enumerated() {
+                let id = UUID()
+                let path = try store.storeImageData(data, id: id)
+                seeds.append(BoardItem(id: id, kind: .image, category: .inbox, order: index,
+                                       imageRelativePath: path, isPinned: index == 0, name: "batch-\(index)"))
+            }
+            try store.saveBoard(seeds)
+            let model = BoardModel(store: store, monitorsClipboard: false)
+            model.toggleImageSelection(seeds[1].id)
+            model.toggleImageSelection(seeds[0].id)
+            try check(model.imageDragItems(startingAt: seeds[1].id).map(\.id) == seeds.map(\.id), "selection click order changed drag order")
+            model.toggleImageSelection(seeds[0].id)
+            try check(model.imageDragItems(startingAt: seeds[0].id).map(\.id) == [seeds[0].id], "unselected drag included other selected images")
+            model.toggleImageSelection(seeds[0].id)
+            var snapshots: [ImageDragSnapshot]?
+            var finished = false
+            model.prepareImageDrag(startingAt: seeds[1].id) { snapshots = $0; finished = true }
+            try waitUntil { finished }
+            let batch = try require(snapshots, "batch export failed")
+            try check(batch.map(\.id) == seeds.map(\.id), "batch snapshot omitted or reordered images")
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            try check(pasteboard.writeObjects(batch.map { $0.pasteboardItem() }), "native batch pasteboard write failed")
+            try check(model.draggedImageIDs(from: pasteboard) == seeds.map(\.id), "native batch pasteboard omitted an ID")
+            for (index, entry) in (pasteboard.pasteboardItems ?? []).enumerated() {
+                try check(entry.data(forType: .png) == bytes[index], "batch PNG changed color profile or image identity")
+                let url = try require(entry.string(forType: .fileURL).flatMap(URL.init(string:)), "missing export URL")
+                try check(try Data(contentsOf: url) == bytes[index], "file URL and PNG bytes differ")
+            }
+            var notifications = 0
+            model.onCopySuccess = { notifications += 1 }
+            try check(model.copyDraggedImage(from: pasteboard, to: .reference), "batch drop rejected")
+            try waitUntil { model.orderedItems(in: .reference).count == 2 }
+            let copied = model.orderedItems(in: .reference)
+            try check(copied.map(\.name) == seeds.map(\.name), "batch copies reordered names")
+            try check(copied.allSatisfy { !$0.isPinned }, "copies inherited source pin partition")
+            for (index, item) in copied.enumerated() {
+                let url = try require(model.imageURL(for: item), "copied image missing")
+                try check(try Data(contentsOf: url) == bytes[index], "batch copy changed original PNG")
+            }
+            try check(notifications == 1, "batch played more than one success sound")
+            try check(model.orderedItems(in: .inbox).map(\.id) == seeds.map(\.id), "batch removed or reordered sources")
+            try check(model.selectedImageIDs.count == 2, "drop lost selection")
+            model.selectCategory(.reference)
+            try check(model.selectedImageIDs.isEmpty, "category switch did not clear selection")
+            model.toggleImageSelection(copied[0].id)
+            model.delete(copied[0].id)
+            try check(model.selectedImageIDs.isEmpty, "deleted image stayed selected")
+        }
+    }
+
+    private static func testMultiImageFailure() throws {
+        try withTemporaryStore { _, store in
+            var seeds: [BoardItem] = []
+            for index in 0..<2 {
+                let id = UUID()
+                let path = try store.storeImageData(pngFixture(red: 0.4, green: CGFloat(index) * 0.7,
+                                                              blue: 0.6, marker: "failure-\(index)"), id: id)
+                seeds.append(BoardItem(id: id, kind: .image, category: .inbox, order: index, imageRelativePath: path))
+            }
+            try store.saveBoard(seeds)
+            let model = BoardModel(store: store, monitorsClipboard: false)
+            seeds.forEach { model.toggleImageSelection($0.id) }
+            let savedBoard = try Data(contentsOf: store.paths.boardFile)
+            var snapshots: [ImageDragSnapshot]?
+            var finished = false
+            model.prepareImageDrag(startingAt: seeds[0].id) { snapshots = $0; finished = true }
+            try waitUntil { finished }
+            let batch = try require(snapshots, "failure fixture export failed")
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.writeObjects(batch.map { $0.pasteboardItem() })
+            let missingURL = try require(model.imageURL(for: seeds[1]), "failure fixture source missing")
+            try FileManager.default.removeItem(at: missingURL)
+            var notifications = 0
+            model.onCopySuccess = { notifications += 1 }
+            try check(model.copyDraggedImage(from: pasteboard, to: .reference), "batch preparation was not accepted")
+            try waitUntil { model.statusText.contains("批量复制失败") }
+            try check(model.orderedItems(in: .reference).isEmpty, "batch saved the first image despite second failure")
+            try check(try Data(contentsOf: store.paths.boardFile) == savedBoard, "failed batch changed persisted board")
+            try check(notifications == 0, "failed batch played success sound")
+            let imageFiles = try FileManager.default.contentsOfDirectory(atPath: missingURL.deletingLastPathComponent().path)
+            try check(imageFiles.count == 1, "failed batch leaked a new managed image")
+        }
+    }
+
+    private static func testMultiImageSaveFailure() throws {
+        try withTemporaryStore { _, store in
+            let bytes = try pngFixture(red: 0.7, green: 0.2, blue: 0.6, marker: "save-failure")
+            var seeds: [BoardItem] = []
+            for index in 0..<2 {
+                let id = UUID()
+                let path = try store.storeImageData(bytes, id: id)
+                seeds.append(BoardItem(id: id, kind: .image, category: .inbox, order: index, imageRelativePath: path))
+            }
+            try store.saveBoard(seeds)
+            let model = BoardModel(store: store, monitorsClipboard: false)
+            seeds.forEach { model.toggleImageSelection($0.id) }
+            var snapshots: [ImageDragSnapshot]?
+            var finished = false
+            model.prepareImageDrag(startingAt: seeds[0].id) { snapshots = $0; finished = true }
+            try waitUntil { finished }
+            let batch = try require(snapshots, "save-failure export failed")
+            let pasteboard = NSPasteboard.withUniqueName()
+            defer { pasteboard.releaseGlobally() }
+            pasteboard.writeObjects(batch.map { $0.pasteboardItem() })
+            // Only this test's disposable primary file becomes an unwritable directory.
+            try FileManager.default.removeItem(at: store.paths.boardFile)
+            try FileManager.default.createDirectory(at: store.paths.boardFile, withIntermediateDirectories: false)
+            var notifications = 0
+            model.onCopySuccess = { notifications += 1 }
+            try check(model.copyDraggedImage(from: pasteboard, to: .reference), "save-failure drop rejected before processing")
+            try waitUntil { model.statusText.contains("图片未保存") }
+            try check(model.orderedItems(in: .reference).isEmpty, "failed save kept partial records")
+            try check(model.selectedImageIDs == Set(seeds.map(\.id)), "failed save cleared selection")
+            let sourceURL = try require(model.imageURL(for: seeds[0]), "save-failure source missing")
+            try waitUntil {
+                (try? FileManager.default.contentsOfDirectory(atPath: sourceURL.deletingLastPathComponent().path).count) == 2
+            }
+            try check(notifications == 0, "failed save played success sound")
+            try check(try Data(contentsOf: sourceURL) == bytes, "failed save damaged source image")
         }
     }
 

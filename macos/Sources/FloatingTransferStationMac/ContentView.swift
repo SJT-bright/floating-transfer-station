@@ -743,6 +743,18 @@ struct ContentView: View {
                     .padding(7)
                 }
                 .id("\(model.activeCategory.rawValue)-\(searchQuery)-\(page.index)")
+                if !model.selectedImageIDs.isEmpty {
+                    Divider()
+                    HStack {
+                        Text("已选 \(model.selectedImageIDs.count) 张图片")
+                        Spacer()
+                        Button("取消选择") { model.clearImageSelection() }
+                            .buttonStyle(StationButtonStyle())
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
                 if page.pageCount > 1 {
                     Divider()
                     HStack {
@@ -870,7 +882,7 @@ struct ContentView: View {
                 .scaleEffect(isDropTarget ? 1.03 : 1)
                 .animation(.easeOut(duration: 0.12), value: dropTargetCategory)
                 .onDrop(
-                    of: [UTType.fileURL.identifier],
+                    of: [UTType.fileURL.identifier, BoardModel.imageItemDragType],
                     delegate: CategoryCopyDropDelegate(
                         model: model,
                         category: category,
@@ -1340,7 +1352,7 @@ private struct ItemCard: View {
                 .layoutPriority(1)
                 .onAppear { nameDraft = item.name ?? "" }
                 .onDisappear { finishNaming() }
-                if !isRenamingItem && (model.settings.cardCopyPinButtonsEnabled || !model.settings.cardActionsInContextMenuOnly) {
+                if !isRenamingItem && (item.kind == .image || model.settings.cardCopyPinButtonsEnabled || !model.settings.cardActionsInContextMenuOnly) {
                     inlineActions
                 }
             }
@@ -1382,7 +1394,9 @@ private struct ItemCard: View {
                         .foregroundStyle(textColor.opacity(0.75))
                 }
             } else if let url = model.imageURL(for: item) {
-                StationImageCard(model: model, item: item, url: url)
+                StationImageCard(model: model, item: item, url: url, onDragActivity: { active in
+                    presentation.setContentEditing(active, itemID: item.id)
+                })
             } else {
                 Label("图片文件已丢失", systemImage: "exclamationmark.triangle")
                     .font(.caption)
@@ -1421,7 +1435,7 @@ private struct ItemCard: View {
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(
-                    item.isPinned
+                    item.isPinned || model.selectedImageIDs.contains(item.id)
                         ? Color.accentColor.opacity(0.55)
                         : textColor.opacity(isCardLifted ? 0.25 : 0)
                 )
@@ -1535,6 +1549,14 @@ private struct ItemCard: View {
 
     private var inlineActions: some View {
         HStack(spacing: 4) {
+            if item.kind == .image {
+                let selected = model.selectedImageIDs.contains(item.id)
+                cardAction(selected ? "取消选择图片" : "选择图片", symbol: selected ? "checkmark.square.fill" : "square") {
+                    model.toggleImageSelection(item.id)
+                }
+                .foregroundStyle(selected ? Color.accentColor : textColor)
+                .accessibilityValue(selected ? "已选中" : "未选中")
+            }
             if !model.settings.cardActionsInContextMenuOnly && item.kind == .text {
                 cardAction("查看全文", symbol: "doc.text.magnifyingglass") { showsFullText = true }
             }
@@ -1641,6 +1663,7 @@ private struct StationImageCard: View {
     let model: BoardModel
     let item: BoardItem
     let url: URL
+    let onDragActivity: (Bool) -> Void
     @State private var preview: ImagePreview?
     @State private var loading = true
 
@@ -1653,14 +1676,8 @@ private struct StationImageCard: View {
                     .frame(maxWidth: .infinity, maxHeight: 180)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .contentShape(Rectangle())
-                    .onDrag { model.dragProvider(for: item, imageData: preview.data) } preview: {
-                        Image(nsImage: preview.image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 160, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-                    .help("拖到其他分类复制，或拖到其他应用")
+                    .overlay(ImageDragSurface(model: model, itemID: item.id, preview: preview.image, onActivity: onDragActivity))
+                    .help("勾选后拖动任意已选图片，可一起拖到其他分类或其他应用；未勾选时只拖这一张")
             } else if loading {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 60)
             } else {
@@ -1815,7 +1832,8 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        category != model.activeCategory && provider(from: info) != nil
+        category != model.activeCategory && (provider(from: info) != nil
+            || !model.draggedImageIDs(from: NSPasteboard(name: .drag)).isEmpty)
     }
 
     func dropEntered(info: DropInfo) {
@@ -1835,7 +1853,7 @@ private struct CategoryCopyDropDelegate: DropDelegate {
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        guard provider(from: info) != nil else {
+        guard validateDrop(info: info) else {
             targetedCategory = nil
             return false
         }

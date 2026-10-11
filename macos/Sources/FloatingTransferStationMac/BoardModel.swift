@@ -3,11 +3,29 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+struct ImageDragSnapshot {
+    let id: UUID
+    let url: URL
+    let data: Data
+
+    func pasteboardItem() -> NSPasteboardItem {
+        let result = NSPasteboardItem()
+        result.setString(url.absoluteString, forType: .fileURL)
+        result.setData(data, forType: .png)
+        result.setString(id.uuidString, forType: NSPasteboard.PasteboardType(BoardModel.imageItemDragType))
+        return result
+    }
+}
+
 final class BoardModel: ObservableObject {
     static let textItemDragType = "com.oiawlm.station.text-item"
+    static let imageItemDragType = "com.oiawlm.station.image-item"
 
     @Published private(set) var items: [BoardItem]
-    @Published var activeCategory: BoardCategory
+    @Published var activeCategory: BoardCategory {
+        didSet { if oldValue != activeCategory { clearImageSelection() } }
+    }
+    @Published private(set) var selectedImageIDs = Set<UUID>()
     let defaultCaptureCategory: BoardCategory = .inbox
     @Published private(set) var settings: WindowSettings
     @Published private(set) var statusText = ""
@@ -20,6 +38,7 @@ final class BoardModel: ObservableObject {
     private var clipboardTimer: Timer?
     private var lastPasteboardChangeCount: Int
     private let fileImportQueue = DispatchQueue(label: "com.oiawlm.station.file-import", qos: .userInitiated)
+    private let imageDragQueue = DispatchQueue(label: "com.oiawlm.station.image-drag", qos: .userInitiated)
     private var pendingFileImports = 0
     private var preparingExports = Set<String>()
 
@@ -71,6 +90,60 @@ final class BoardModel: ObservableObject {
         activeCategory = isDeletedCategory(category) || !categories.contains(category)
             ? .inbox
             : category
+    }
+
+    func toggleImageSelection(_ id: UUID) {
+        guard items.contains(where: { $0.id == id && $0.kind == .image }) else { return }
+        if !selectedImageIDs.insert(id).inserted { selectedImageIDs.remove(id) }
+    }
+
+    func clearImageSelection() {
+        if !selectedImageIDs.isEmpty { selectedImageIDs.removeAll() }
+    }
+
+    func imageDragItems(startingAt id: UUID) -> [BoardItem] {
+        guard let source = items.first(where: { $0.id == id && $0.kind == .image }) else { return [] }
+        guard selectedImageIDs.contains(id) else { return [source] }
+        return items.filter { $0.kind == .image && selectedImageIDs.contains($0.id) }
+            .sorted(by: Self.displayOrder)
+    }
+
+    // File IO and PNG export preparation must not block the native mouse loop.
+    func prepareImageDrag(startingAt id: UUID, completion: @escaping ([ImageDragSnapshot]?) -> Void) {
+        let sources = imageDragItems(startingAt: id)
+        guard !sources.isEmpty else { completion(nil); return }
+        let store = self.store
+        imageDragQueue.async { [weak self] in
+            let result: [ImageDragSnapshot]?
+            do {
+                result = try sources.map { source in
+                    guard let path = source.imageRelativePath, let url = store.managedImageURL(relativePath: path) else {
+                        throw CocoaError(.fileNoSuchFile)
+                    }
+                    let bytes = try Data(contentsOf: url, options: .mappedIfSafe)
+                    let export = try store.exportImageForDrag(relativePath: path, imageData: bytes)
+                    return ImageDragSnapshot(id: source.id, url: export, data: bytes)
+                }
+            } catch { result = nil }
+            DispatchQueue.main.async {
+                guard let self else { completion(nil); return }
+                guard let result, sources.allSatisfy({ source in
+                    self.items.contains { $0.id == source.id && $0.imageRelativePath == source.imageRelativePath }
+                }) else {
+                    self.showStatus("图片准备失败或已被删除，请重新拖动。")
+                    completion(nil)
+                    return
+                }
+                completion(result)
+            }
+        }
+    }
+
+    func draggedImageIDs(from pasteboard: NSPasteboard) -> [UUID] {
+        (pasteboard.pasteboardItems ?? []).compactMap { entry in
+            guard let value = entry.string(forType: .fileURL), let url = URL(string: value), url.isFileURL else { return nil }
+            return draggedImageID(fromFileName: url.lastPathComponent)
+        }
     }
 
     func searchNamedItems(_ query: String) -> [BoardItem] {
@@ -541,21 +614,33 @@ final class BoardModel: ObservableObject {
     func copyDraggedImage(from pasteboard: NSPasteboard, to targetCategory: BoardCategory) -> Bool {
         // SwiftUI's bridged provider can advertise file-url but fail to load it.
         // Read the URL while the native drag pasteboard is still valid at mouse-up.
-        guard let rawURL = pasteboard.string(forType: .fileURL),
-              let url = URL(string: rawURL),
-              url.isFileURL,
-              let id = draggedImageID(fromFileName: url.lastPathComponent),
-              let source = items.first(where: { $0.id == id })
-        else {
-            showStatus("无法识别这张拖动图片，请重试。")
-            return false
+        guard targetCategory != .files, categories.contains(targetCategory),
+              let entries = pasteboard.pasteboardItems, !entries.isEmpty else { return false }
+        var sources: [(BoardItem, URL)] = []
+        var seen = Set<UUID>()
+        for entry in entries {
+            guard let rawURL = entry.string(forType: .fileURL), let url = URL(string: rawURL), url.isFileURL,
+                  let id = draggedImageID(fromFileName: url.lastPathComponent), seen.insert(id).inserted,
+                  let source = items.first(where: { $0.id == id }), source.category != targetCategory,
+                  url.standardizedFileURL.path.hasPrefix(store.paths.dragExportsDirectory.standardizedFileURL.path + "/") else {
+                showStatus("无法完整识别拖动图片，请重新拖动。")
+                return false
+            }
+            sources.append((source, url))
         }
-        guard let relativePath = source.imageRelativePath,
-              store.isImageDragURL(url, relativePath: relativePath) else {
-            showStatus("请从中转站内拖动图片到其他分类。")
-            return false
+        enqueueImageImport(in: targetCategory, failureMessage: "图片批量复制失败，本次未保存，请重试。") { store, paths in
+            try sources.map { source, exportURL in
+                guard let path = source.imageRelativePath, store.isImageDragURL(exportURL, relativePath: path) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                let id = UUID()
+                let copiedPath = try store.storeImageFile(exportURL, id: id)
+                paths.append(copiedPath)
+                return BoardItem(id: id, kind: .image, category: targetCategory, order: 0,
+                                 imageRelativePath: copiedPath, name: source.name)
+            }
         }
-        return copyImage(id, to: targetCategory)
+        return true
     }
 
     private func draggedImageID(fromFileName fileName: String) -> UUID? {
@@ -850,6 +935,7 @@ final class BoardModel: ObservableObject {
         items = Self.normalized(items)
         do {
             try store.saveBoard(items)
+            selectedImageIDs.formIntersection(Set(items.filter { $0.kind == .image }.map(\.id)))
             return true
         } catch {
             items = previous
@@ -890,6 +976,7 @@ final class BoardModel: ObservableObject {
         }
 
         cleanUpEvictedImages(evicted)
+        selectedImageIDs.formIntersection(Set(items.filter { $0.kind == .image }.map(\.id)))
         let retainedIDs = Set(items.map(\.id))
         return inserted.filter { retainedIDs.contains($0.id) }
     }
