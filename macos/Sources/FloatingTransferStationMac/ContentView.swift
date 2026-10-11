@@ -1044,7 +1044,7 @@ private struct AppearanceEditor: View {
                 Text("每条文字、图片、文件的标题旁显示两个常用按钮，可单独关闭。")
                     .font(.caption).foregroundStyle(.secondary)
                 interactionToggle("其他操作仅放在右键菜单", key: \.cardActionsInContextMenuOnly)
-                Text("关闭后再显示全文、展开、移动和删除等按钮，右键菜单始终保留。")
+                Text("关闭后再显示全文、移动和删除等按钮；文字展开箭头始终保留，右键菜单始终可用。")
                     .font(.caption).foregroundStyle(.secondary)
                 interactionToggle("卡片悬停浮起与阴影", key: \.cardHoverLiftEnabled)
                 Text("文字、图片和文件卡片统一提示；编辑、菜单和拖动期间暂停浮起。系统减少动态效果时只保留高亮和阴影。")
@@ -1281,6 +1281,12 @@ private struct ItemCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 5) {
+                if item.kind == .text && hasName && !isRenamingItem {
+                    cardAction(disclosure.isExpanded ? "收起正文" : "展开正文",
+                               symbol: disclosure.isExpanded ? "chevron.down" : "chevron.right") {
+                        disclosure.toggle()
+                    }
+                }
                 Group {
                     if isRenamingItem {
                         TextField("输入名称", text: $nameDraft)
@@ -1305,8 +1311,8 @@ private struct ItemCard: View {
                                     && activeTextDragID == nil && !isRenamingItem && !isShowingContextMenu)
                             })
                             .help(model.settings.textHoverExpansionEnabled
-                                ? "点击标题改名；停留满 1 秒展开正文，移出卡片收起；右键显示操作；拖动标题排序或拖出全文"
-                                : "点击标题改名；右键展开或收起正文；拖动标题排序或拖出全文")
+                                ? "点击名称文字改名；点击左侧箭头或名称旁空白展开/收起；停留满 1 秒自动展开；拖动名称排序或拖出全文"
+                                : "点击名称文字改名；点击左侧箭头或名称旁空白展开/收起；拖动名称排序或拖出全文")
                     } else if item.kind == .text {
                         draggableTextTitle("添加名称", onClick: beginNaming)
                             .foregroundStyle(textColor.opacity(0.7))
@@ -1320,6 +1326,17 @@ private struct ItemCard: View {
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                .background {
+                    if item.kind == .text && hasName && !isRenamingItem {
+                        // Only the rendered name owns rename/drag input. The
+                        // remaining title space is a separate disclosure target.
+                        Button { disclosure.toggle() } label: {
+                            Color.clear.contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHidden(true)
+                    }
+                }
                 .layoutPriority(1)
                 .onAppear { nameDraft = item.name ?? "" }
                 .onDisappear { finishNaming() }
@@ -1519,12 +1536,6 @@ private struct ItemCard: View {
     private var inlineActions: some View {
         HStack(spacing: 4) {
             if !model.settings.cardActionsInContextMenuOnly && item.kind == .text {
-                if hasName {
-                    cardAction(disclosure.isExpanded ? "收起正文" : "展开正文",
-                               symbol: disclosure.isExpanded ? "chevron.down" : "chevron.right") {
-                        disclosure.toggle()
-                    }
-                }
                 cardAction("查看全文", symbol: "doc.text.magnifyingglass") { showsFullText = true }
             }
             if model.settings.cardCopyPinButtonsEnabled {
@@ -1573,18 +1584,16 @@ private struct ItemCard: View {
                 .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("点击标题改名；右键显示全部操作")
+        .help("点击名称文字改名；右键显示全部操作")
     }
 
     private func draggableTextTitle(_ title: String, onClick: @escaping () -> Void) -> some View {
         Button(action: onClick) {
             Text(title)
                 .font(.system(size: TextCardLayout.titleFontSize, weight: .semibold))
-                .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(1)
                 .truncationMode(.tail)
         }
