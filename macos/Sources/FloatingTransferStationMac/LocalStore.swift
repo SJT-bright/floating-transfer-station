@@ -87,16 +87,19 @@ final class LocalStore {
                 return !(item.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             case .image:
                 guard let relativePath = item.imageRelativePath,
-                      let imageURL = managedImageURL(relativePath: relativePath)
+                      managedImageURL(relativePath: relativePath) != nil
                 else {
                     return false
                 }
-                return fileManager.fileExists(atPath: imageURL.path)
+                // A missing managed file is not permission to delete its record.
+                // Keep the safe path so the card can explain the missing asset.
+                return true
             case .file:
                 guard item.category == .files,
                       let path = item.fileRelativePath,
-                      let url = managedFileURL(relativePath: path),
-                      let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else { return false }
+                      let url = managedFileURL(relativePath: path) else { return false }
+                if !fileManager.fileExists(atPath: url.path) { return true }
+                guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]) else { return false }
                 return values.isRegularFile == true
             }
         }

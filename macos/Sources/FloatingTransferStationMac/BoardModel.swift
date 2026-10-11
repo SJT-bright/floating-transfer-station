@@ -65,6 +65,16 @@ final class BoardModel: ObservableObject {
         lastPasteboardChangeCount = NSPasteboard.general.changeCount
         if let loadWarning {
             statusText = loadWarning
+        } else {
+            let missingCount = items.filter { item in
+                switch item.kind {
+                case .text: return false
+                case .image:
+                    return imageURL(for: item).map { !FileManager.default.fileExists(atPath: $0.path) } ?? true
+                case .file: return fileURL(for: item) == nil
+                }
+            }.count
+            if missingCount > 0 { statusText = "有 \(missingCount) 条素材文件缺失，记录已保留，请重新导入原文件。" }
         }
 
         if monitorsClipboard {
@@ -664,7 +674,9 @@ final class BoardModel: ObservableObject {
 
     func fileURL(for item: BoardItem) -> URL? {
         guard item.kind == .file, let path = item.fileRelativePath else { return nil }
-        return store.managedFileURL(relativePath: path)
+        guard let url = store.managedFileURL(relativePath: path),
+              (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return nil }
+        return url
     }
 
     func importFiles(_ urls: [URL]) {

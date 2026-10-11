@@ -16,6 +16,7 @@ enum MacCoreTests {
         try testFourAssetCategoriesRemainDistinct()
         try testStoreReadsWindowsCompatibleLegacyJSON()
         try testEscapingManagedImagePathIsRejected()
+        try testMissingManagedAssetsKeepRecords()
         try testPanelGeometryKeepsCollapsedHandleSmallAndRightAligned()
         try testPanelGeometryClampsExpandedPanelToCompactBounds()
         try testVerticalRailDragStaysAttachedToRightEdge()
@@ -48,7 +49,7 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (38 tests)")
+        print("macOS core tests passed (39 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -57,6 +58,29 @@ enum MacCoreTests {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }
         try check(predicate(), "asynchronous file operation timed out")
+    }
+
+    private static func testMissingManagedAssetsKeepRecords() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory.appendingPathComponent("data")))
+        let imageID = UUID()
+        let fileID = UUID()
+        let image = BoardItem(id: imageID, kind: .image, category: .inbox, order: 0,
+                              imageRelativePath: "images/\(imageID.uuidString.lowercased()).png", name: "Missing image")
+        let file = BoardItem(id: fileID, kind: .file, category: .files, order: 0, name: "Missing file",
+                             fileRelativePath: "files/\(fileID.uuidString.lowercased())/source.txt", fileName: "source.txt")
+        try store.saveBoard([image, file])
+        try check(Set(store.loadBoard().map(\.id)) == Set([imageID, fileID]), "missing assets were silently dropped on load")
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        try check(model.statusText.contains("2 条素材文件缺失"), "missing assets did not produce a visible explanation")
+        try check(model.fileURL(for: file) == nil, "missing file advertised a working URL")
+        model.addText("A new capture", to: .inbox)
+        let reloaded = BoardModel(store: store, monitorsClipboard: false)
+        try check(reloaded.items.count == 3 && Set(reloaded.items.map(\.id)).isSuperset(of: [imageID, fileID]),
+                  "next save permanently removed missing-asset metadata")
+        try check(reloaded.items.first(where: { $0.id == imageID })?.name == image.name,
+                  "missing image lost its name")
     }
 
     private static func testFileImportCopiesAndPersistsOriginalBytes() throws {
