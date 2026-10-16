@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleIdentifier</key><string>com.oiawlm.station.body-edit-qa</string>
+    <key>CFBundleName</key><string>正文编辑验收</string>
+    <key>CFBundleExecutable</key><string>TextEditingUITests</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+    <key>CFBundleLocalizations</key><array><string>zh-Hans</string></array>
+    <key>NSHighResolutionCapable</key><true/>
+</dict></plist>

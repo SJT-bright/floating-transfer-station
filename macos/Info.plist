@@ -21,9 +21,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.7.18-mac</string>
+    <string>1.7.19-mac</string>
     <key>CFBundleVersion</key>
-    <string>40</string>
+    <string>41</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSUIElement</key>

@@ -40,6 +40,9 @@ enum MacCoreTests {
         try testCollapseRunsOnHostedLayerAndFinishes()
         try testAppearancePersistsWithoutChangingCategories()
         try testNamesSearchAndPersistence()
+        try testBodyEditingPersistsWithoutChangingIdentity()
+        try testBodyEditingRejectsInvalidAndConflictingChanges()
+        try testBodyEditingSaveFailurePreservesOriginal()
         try testExpandedTextFitsActualLines()
         try testFreePositionAndBothEdgeSnapping()
         try testFileImportCopiesAndPersistsOriginalBytes()
@@ -49,7 +52,7 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (39 tests)")
+        print("macOS core tests passed (42 tests)")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {
@@ -244,6 +247,63 @@ enum MacCoreTests {
         let data = try JSONEncoder().encode(legacy)
         let decoded = try JSONDecoder().decode(BoardItem.self, from: data)
         try check(decoded.name == nil && decoded.text == "旧数据", "legacy item lost")
+    }
+
+    private static func testBodyEditingPersistsWithoutChangingIdentity() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        model.addText("旧正文", to: .prompt)
+        let id = try require(model.items.first?.id, "missing text")
+        model.renameItem(id, to: "保留名称")
+        model.togglePinned(id)
+        let before = try require(model.items.first, "missing original")
+        let replacement = "  新正文\n第二行 👩🏽‍💻\n" + String(repeating: "完整长文内容", count: 1000) + "\n  "
+        try check(model.updateText(id, to: replacement, expectedOriginal: "旧正文"), "body update failed")
+        var expected = before; expected.text = replacement
+        try check(model.items.first == expected, "editing changed identity or other metadata")
+        let restored = BoardModel(store: store, monitorsClipboard: false)
+        try check(restored.items.first == expected, "edited body did not survive restart")
+        try check(restored.searchNamedItems("保留名称").map(\.id) == [id], "editing broke name search")
+        try check(restored.searchNamedItems("新正文").isEmpty, "body was added to name search")
+        let provider = restored.dragProvider(for: expected)
+        try check(provider.hasItemConformingToTypeIdentifier(UTType.utf8PlainText.identifier), "edited text lost drag representation")
+    }
+
+    private static func testBodyEditingRejectsInvalidAndConflictingChanges() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = LocalStore(paths: AppPaths(dataDirectory: directory))
+        let model = BoardModel(store: store, monitorsClipboard: false)
+        model.addText("原文", to: .inbox)
+        let original = try require(model.items.first, "missing original")
+        try check(!model.updateText(original.id, to: " \n\t", expectedOriginal: "原文"), "empty body accepted")
+        try check(model.items.first == original, "invalid body changed item")
+        try check(model.updateText(original.id, to: "第一次修改", expectedOriginal: "原文"), "first edit failed")
+        try check(!model.updateText(original.id, to: "过期草稿", expectedOriginal: "原文"), "stale edit overwrote newer body")
+        try check(model.items.first?.text == "第一次修改", "conflict destroyed saved body")
+        model.delete(original.id)
+        try check(!model.updateText(original.id, to: "不应恢复", expectedOriginal: "第一次修改"), "deleted item was recreated")
+        try check(store.loadBoard().isEmpty, "editing resurrected deleted content")
+    }
+
+    private static func testBodyEditingSaveFailurePreservesOriginal() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let paths = AppPaths(dataDirectory: directory)
+        let store = LocalStore(paths: paths)
+        let item = BoardItem(kind: .text, category: .prompt, order: 0, text: "原文不丢失", isPinned: true, name: "已命名")
+        try store.saveBoard([item])
+        let before = try Data(contentsOf: paths.boardFile)
+        let failing = LocalStore(paths: paths, writeData: { _, _ in throw CocoaError(.fileWriteNoPermission) })
+        let model = BoardModel(store: failing, monitorsClipboard: false)
+        let original = try require(model.items.first, "missing original")
+        try check(!model.updateText(item.id, to: "未保存草稿", expectedOriginal: item.text!), "failed write reported success")
+        try check(model.items.first == original, "failed write changed in-memory item")
+        let after = try Data(contentsOf: paths.boardFile)
+        try check(before == after, "failed write changed saved board")
+        try check(model.statusText.contains("原文已保留"), "failed edit did not explain preservation")
     }
 
     private static func testAppearancePersistsWithoutChangingCategories() throws {

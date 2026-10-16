@@ -1252,6 +1252,7 @@ private struct ItemCard: View {
     var showsCategory = false
     @Binding var activeTextDragID: UUID?
     @State private var showsFullText = false
+    @State private var opensTextEditor = false
     @StateObject private var disclosure = TextCardDisclosure()
     @State private var measuredCardHeight: CGFloat = 0
     @State private var textDropEdge: TextDropEdge?
@@ -1487,7 +1488,8 @@ private struct ItemCard: View {
                 .onAppear { isShowingContextMenu = true }
                 .onDisappear { isShowingContextMenu = false }
             if item.kind == .text {
-                Button("查看全文") { showsFullText = true }
+                Button("查看全文") { openTextDocument(editing: false) }
+                Button("编辑正文") { openTextDocument(editing: true) }
                 if hasName {
                     Button(disclosure.isExpanded ? "收起正文" : "展开正文") {
                         // An explicit menu action is allowed after releasing the
@@ -1524,27 +1526,19 @@ private struct ItemCard: View {
             }
         }
         .sheet(isPresented: $showsFullText) {
-            VStack(spacing: 12) {
-                HStack {
-                    Text("文字全文").font(.headline)
-                    Spacer()
-                    Button("复制全文") { model.copyToClipboard(item) }
-                        .buttonStyle(.bordered)
-                        .modifier(StationHoverEffect())
-                    Button("关闭") { showsFullText = false }
-                        .buttonStyle(.bordered)
-                        .modifier(StationHoverEffect())
-                        .keyboardShortcut(.cancelAction)
-                }
-                FullTextReader(text: item.text ?? "")
+            TextDocumentSheet(model: model, item: item, initiallyEditing: opensTextEditor) {
+                showsFullText = false
             }
-            .padding(16)
-            .frame(width: 420, height: 440)
         }
     }
 
     private func saveName() {
         model.renameItem(item.id, to: nameDraft)
+    }
+
+    private func openTextDocument(editing: Bool) {
+        opensTextEditor = editing
+        showsFullText = true
     }
 
     private var inlineActions: some View {
@@ -1558,7 +1552,8 @@ private struct ItemCard: View {
                 .accessibilityValue(selected ? "已选中" : "未选中")
             }
             if !model.settings.cardActionsInContextMenuOnly && item.kind == .text {
-                cardAction("查看全文", symbol: "doc.text.magnifyingglass") { showsFullText = true }
+                cardAction("查看全文", symbol: "doc.text.magnifyingglass") { openTextDocument(editing: false) }
+                cardAction("编辑正文", symbol: "square.and.pencil") { openTextDocument(editing: true) }
             }
             if model.settings.cardCopyPinButtonsEnabled {
                 cardAction(item.isPinned ? "取消置顶" : "置顶", symbol: item.isPinned ? "pin.fill" : "pin") {
@@ -1694,7 +1689,7 @@ private struct StationImageCard: View {
     }
 }
 
-private struct FullTextReader: NSViewRepresentable {
+struct FullTextReader: NSViewRepresentable {
     let text: String
     var compact = false
     var color: NSColor = .labelColor

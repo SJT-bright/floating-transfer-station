@@ -175,6 +175,29 @@ final class BoardModel: ObservableObject {
         }
     }
 
+    @discardableResult
+    func updateText(_ id: UUID, to text: String, expectedOriginal: String) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }), items[index].kind == .text else {
+            showStatus("这条文字已不存在，未保存修改。")
+            return false
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showStatus("正文不能为空，原文已保留。")
+            return false
+        }
+        if items[index].text == text { return true }
+        guard (items[index].text ?? "") == expectedOriginal else {
+            showStatus("正文已被其他操作修改，请重新打开后编辑；本次草稿仍保留。")
+            return false
+        }
+        let saved = persistMutation(failureMessage: "正文未保存，原文已保留，请重试。") {
+            // Keep identity, name, category, pin state and FIFO position unchanged.
+            items[index].text = text
+        }
+        if saved { showStatus("正文已保存。") }
+        return saved
+    }
+
     var categories: [BoardCategory] {
         var seen = Set<BoardCategory>()
         return (BoardCategory.visibleCases + settings.customCategories + items.map(\.category))
