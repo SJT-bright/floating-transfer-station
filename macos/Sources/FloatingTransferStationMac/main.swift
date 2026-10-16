@@ -10,6 +10,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var launchAtLoginMenuItem: NSMenuItem?
     private var collapseWorkItem: DispatchWorkItem?
     private let collapseMotion = PanelCollapseMotion()
+    private var manualCollapseGate = PanelManualCollapseGate()
+    private var localPointerMonitor: Any?
+    private var globalPointerMonitor: Any?
     private var expandedSize = PanelGeometry.expandedMaximumSize
     private var expandedTop = 80.0
     private var dragStartFrame: NSRect?
@@ -33,7 +36,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.accessory)
         installMainMenu()
 
+        #if STATION_PANEL_QA
+        // Compile-time isolated native QA: never monitor or open formal user data.
+        guard CommandLine.arguments.count == 2,
+              CommandLine.arguments[1].contains("/artifacts/panel-collapse-qa-") else {
+            fatalError("Pass an explicit artifacts/panel-collapse-qa-* directory.")
+        }
+        let qaRoot = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let model = BoardModel(store: LocalStore(paths: AppPaths(
+            dataDirectory: qaRoot.appendingPathComponent("data"),
+            dragExportsDirectory: qaRoot.appendingPathComponent("exports")
+        )), monitorsClipboard: false)
+        if model.items.isEmpty {
+            model.addText("第一行：手动收起验收。\n第二行：原内容保持不变。", to: .prompt)
+            model.renameItem(model.items[0].id, to: "手动收起验收")
+        }
+        model.selectCategory(.prompt)
+        #else
         let model = BoardModel()
+        #endif
         self.model = model
         successSound?.volume = 0.45
         model.onCopySuccess = { [weak self] in
@@ -99,6 +120,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         presentation.onHoverChanged = { [weak self] isInside in
             self?.handleHover(isInside)
         }
+        presentation.onCollapseRequested = { [weak self] in self?.collapseManually() }
+        presentation.onExpandRequested = { [weak self] in
+            self?.clearManualCollapseGate()
+            self?.handleHover(true)
+        }
         presentation.onContentEditingChanged = { [weak self] editing in
             guard let self else { return }
             self.collapseWorkItem?.cancel()
@@ -125,7 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         panel.setFrame(collapsedFrame, display: true)
         panel.orderFrontRegardless()
+        #if !STATION_PANEL_QA
         configureLaunchAtLogin()
+        #endif
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -162,6 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func handleHover(_ isInside: Bool) {
+        // Do not treat tracking changes caused by the close itself as a new entry.
+        if manualCollapseGate.suppressesHover { return }
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
 
@@ -171,6 +201,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         scheduleCollapse(after: PanelMotionTiming.exitDelay)
+    }
+
+    private func collapseManually() {
+        guard presentation.isExpanded, !presentation.isEditingContent,
+              !presentation.isEditingAppearance, dragStartFrame == nil,
+              let panel, panel.attachedSheet == nil else { return }
+        // Search focus may resign; never discard an active content editor/sheet.
+        guard panel.makeFirstResponder(nil), !isAutoCollapseBlocked else { return }
+        collapseWorkItem?.cancel()
+        collapseWorkItem = nil
+        collapseMotion.cancel()
+        clearManualCollapseGate()
+        manualCollapseGate.begin(in: panel.frame)
+        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        localPointerMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+            self?.observeManualCollapsePointer()
+            return event
+        }
+        globalPointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] _ in
+            self?.observeManualCollapsePointer()
+        }
+        setExpanded(false, manually: true)
+    }
+
+    private func observeManualCollapsePointer() {
+        manualCollapseGate.observePointer(NSEvent.mouseLocation)
+        if !manualCollapseGate.suppressesHover { clearManualCollapseGate() }
+    }
+
+    private func clearManualCollapseGate() {
+        manualCollapseGate.reset()
+        if let monitor = localPointerMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = globalPointerMonitor { NSEvent.removeMonitor(monitor) }
+        localPointerMonitor = nil
+        globalPointerMonitor = nil
     }
 
     private func scheduleCollapse(after delay: TimeInterval) {
@@ -198,6 +263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func handleVerticalDragChanged(gestureStartMouse: NSPoint) {
         guard let panel else { return }
+        clearManualCollapseGate()
         collapseWorkItem?.cancel()
         collapseWorkItem = nil
         collapseMotion.cancel()
@@ -242,7 +308,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             || (panel?.isKeyWindow == true && (panel?.firstResponder as? NSText)?.isEditable == true)
     }
 
-    private func setExpanded(_ expanded: Bool) {
+    private func setExpanded(_ expanded: Bool, manually: Bool = false) {
         if expanded {
             collapseMotion.cancel()
         }
@@ -257,8 +323,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             applyExpanded(true)
             return
         }
-        guard isDocked, !collapseMotion.isRunning, !isAutoCollapseBlocked,
-              !panel.frame.contains(NSEvent.mouseLocation) else {
+        guard (manually || isDocked), !collapseMotion.isRunning, !isAutoCollapseBlocked,
+              manually || !panel.frame.contains(NSEvent.mouseLocation) else {
             return
         }
         guard let layer = panel.contentView?.layer else {
@@ -272,8 +338,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             towardLeft: presentation.isDockedLeft
         ) { [weak self] in
             guard let self, let panel = self.panel,
-                  !self.isAutoCollapseBlocked, self.isDocked,
-                  !panel.frame.contains(NSEvent.mouseLocation),
+                  !self.isAutoCollapseBlocked, (manually || self.isDocked),
+                  manually || !panel.frame.contains(NSEvent.mouseLocation),
                   self.dragStartFrame == nil
             else {
                 return

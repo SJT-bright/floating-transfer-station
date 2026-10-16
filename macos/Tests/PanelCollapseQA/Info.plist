@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>com.oiawlm.station.panel-collapse-qa</string>
+<key>CFBundleExecutable</key><string>PanelCollapseQA</string>
+<key>CFBundleName</key><string>手动收起验收</string>
+<key>CFBundleDisplayName</key><string>手动收起验收</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+<key>LSUIElement</key><true/>
+</dict></plist>

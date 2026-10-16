@@ -22,6 +22,8 @@ enum MacCoreTests {
         try testVerticalRailDragStaysAttachedToRightEdge()
         try testPanelStaysExpandedWhileDragging()
         try testPanelStaysExpandedWhileEditing()
+        try testManualPanelCollapseGate()
+        try testPanelManualActionsAndEditingProtection()
         try testCardHoverDisclosureCancelsAndResumes()
         try testManualCardDisclosureIgnoresHover()
         try testTitleHoverRequiresContinuousOneSecond()
@@ -52,7 +54,46 @@ enum MacCoreTests {
         try testRecoveryPromotionAndSaveFailureKeepValidBackup()
         try testSaveWithoutLoadKeepsValidBackupOfCorruptPrimary()
         try testBackupWriteFailureKeepsPrimaryAndBackup()
-        print("macOS core tests passed (42 tests)")
+        print("macOS core tests passed (44 tests)")
+    }
+
+    private static func testManualPanelCollapseGate() throws {
+        var gate = PanelManualCollapseGate()
+        let frames = [NSRect(x: 0, y: 100, width: 400, height: 448),
+                      NSRect(x: -900, y: -400, width: 400, height: 448),
+                      NSRect(x: 500, y: 200, width: 400, height: 448)]
+        for frame in frames {
+            gate.begin(in: frame)
+            gate.observePointer(NSPoint(x: frame.minX + 12, y: frame.maxY - 12))
+            try check(gate.suppressesHover, "manual close reopens under its button")
+            gate.observePointer(NSPoint(x: frame.midX, y: frame.midY))
+            try check(gate.suppressesHover, "tracking resize or movement inside the old panel reopens it")
+            gate.observePointer(NSPoint(x: frame.minX - 1, y: frame.midY))
+            try check(!gate.suppressesHover, "leaving the old panel does not restore hover")
+            gate.begin(in: frame)
+            gate.reset()
+            try check(!gate.suppressesHover, "explicit handle click does not restore expansion")
+        }
+    }
+
+    private static func testPanelManualActionsAndEditingProtection() throws {
+        let panel = PanelPresentation()
+        var closes = 0
+        var opens = 0
+        var edits: [Bool] = []
+        panel.onCollapseRequested = { closes += 1 }
+        panel.onExpandRequested = { opens += 1 }
+        panel.onContentEditingChanged = { edits.append($0) }
+        panel.requestCollapse()
+        panel.requestExpand()
+        try check(closes == 1 && opens == 1, "manual actions incorrectly use hover callbacks")
+        let first = UUID(), second = UUID()
+        panel.setContentEditing(true, itemID: first)
+        panel.setContentEditing(true, itemID: second)
+        panel.setContentEditing(false, itemID: first)
+        try check(panel.isEditingContent, "ending one editor enables collapse over another editor")
+        panel.setContentEditing(false, itemID: second)
+        try check(!panel.isEditingContent && edits == [true, false], "editing protection did not reset")
     }
 
     private static func waitUntil(_ predicate: () -> Bool) throws {

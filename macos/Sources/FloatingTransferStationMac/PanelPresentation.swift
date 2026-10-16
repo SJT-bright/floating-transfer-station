@@ -228,14 +228,29 @@ final class PanelCollapseMotion: NSObject, CAAnimationDelegate {
     }
 }
 
+// A manual close wins over stale hover-enter callbacks produced by resizing.
+// Hover may resume only after leaving the old panel, or an explicit handle click.
+struct PanelManualCollapseGate {
+    private(set) var dismissedFrame: NSRect?
+    var suppressesHover: Bool { dismissedFrame != nil }
+
+    mutating func begin(in frame: NSRect) { dismissedFrame = frame }
+    mutating func observePointer(_ point: NSPoint) {
+        if let dismissedFrame, !dismissedFrame.contains(point) { reset() }
+    }
+    mutating func reset() { dismissedFrame = nil }
+}
+
 final class PanelPresentation: ObservableObject {
     @Published private(set) var isExpanded = false
     @Published var isDockedLeft = false
-    var isEditingAppearance = false
+    @Published var isEditingAppearance = false
     private var editingContentIDs = Set<UUID>()
-    var isEditingContent: Bool { !editingContentIDs.isEmpty }
+    @Published private(set) var isEditingContent = false
 
     var onHoverChanged: ((Bool) -> Void)?
+    var onCollapseRequested: (() -> Void)?
+    var onExpandRequested: (() -> Void)?
     var onContentEditingChanged: ((Bool) -> Void)?
     var onVerticalDragChanged: ((NSPoint) -> Void)?
     var onVerticalDragEnded: (() -> Void)?
@@ -243,6 +258,9 @@ final class PanelPresentation: ObservableObject {
     func handleHover(_ isInside: Bool) {
         onHoverChanged?(isInside)
     }
+
+    func requestCollapse() { onCollapseRequested?() }
+    func requestExpand() { onExpandRequested?() }
 
     func setExpanded(_ expanded: Bool) {
         guard isExpanded != expanded else { return }
@@ -253,6 +271,9 @@ final class PanelPresentation: ObservableObject {
         let wasEditing = isEditingContent
         if editing { editingContentIDs.insert(itemID) }
         else { editingContentIDs.remove(itemID) }
+        if isEditingContent != !editingContentIDs.isEmpty {
+            isEditingContent = !editingContentIDs.isEmpty
+        }
         if wasEditing != isEditingContent { onContentEditingChanged?(isEditingContent) }
     }
 

@@ -442,7 +442,7 @@ struct ContentView: View {
         .onDisappear { dropTargetCategory = nil }
         .onTapGesture {
             if !presentation.isExpanded {
-                presentation.handleHover(true)
+                presentation.requestExpand()
             }
         }
     }
@@ -603,6 +603,17 @@ struct ContentView: View {
 
     private var toolbar: some View {
         HStack(spacing: 8) {
+            Button(action: presentation.requestCollapse) {
+                Image(systemName: "minus")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .help("收起悬浮窗；再次点击侧边标签可展开")
+            .accessibilityLabel("收起悬浮窗")
+            .accessibilityIdentifier("station-collapse-panel")
+            .disabled(presentation.isEditingContent || presentation.isEditingAppearance)
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(isSearching ? "搜索结果" : model.displayName(for: model.activeCategory))
                     .font(.headline)
